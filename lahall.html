@@ -95,6 +95,8 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
 .scene .seg { padding: 0; gap: 2px; flex-wrap: wrap; }
 .scene .seg button { flex: 1; padding: 8px 6px 6px; font-size: 12px; text-transform: none; letter-spacing: 0; border: 1px solid var(--line); }
 .tool.mini { padding: 6px 9px; min-height: 30px; }
+.livenote { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; line-height: 1.4; color: var(--panel-fg); }
+.livenote:empty { display: none; }
 .tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 .search input { width: 230px; cursor: text; font-weight: 400; }
 .search input::placeholder { color: var(--muted); }
@@ -174,6 +176,8 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
           <span id="l-weather">Weather</span>
           <div class="seg" role="group" aria-labelledby="l-weather" id="weathers"><button type="button" data-v="clear" aria-pressed="true">Clear</button><button type="button" data-v="rain" aria-pressed="false">Rain</button><button type="button" data-v="fog" aria-pressed="false">Fog</button><button type="button" data-v="snow" aria-pressed="false">Snow</button></div>
           <button type="button" class="tool" id="snd" aria-pressed="false">Sound off</button>
+          <button type="button" class="tool" id="live" aria-pressed="false">Live: match Täby right now</button>
+          <span id="livenote" class="livenote" role="status"></span>
         </div>
       </div>
       <div class="search">
@@ -1364,6 +1368,49 @@ var sound = (function () {
 })();
 $('snd').addEventListener('click', function () { var v = !sound.isOn(); if (!sound.set(v)) { this.textContent = 'No sound here'; this.disabled = true; return; } this.setAttribute('aria-pressed', v ? 'true' : 'false'); this.textContent = v ? 'Sound on' : 'Sound off'; });
 
+/* ---------- live: the real clock and the real weather over Täby ---------- */
+var live = (function () {
+  var on = false, timer = null, last = null, busy = false;
+  var URL = 'https://api.open-meteo.com/v1/forecast?latitude=59.42&longitude=18.07&current=temperature_2m,weather_code,snow_depth,cloud_cover,wind_speed_10m&timezone=Europe%2FStockholm';
+  function stockholm() {
+    try { var p = {}; new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Stockholm', hour12: false, hour: '2-digit', minute: '2-digit', month: 'numeric' }).formatToParts(new Date()).forEach(function (x) { p[x.type] = x.value; }); return { h: (+p.hour % 24) + (+p.minute) / 60, m: +p.month }; }
+    catch (e) { var d = new Date(); return { h: d.getHours() + d.getMinutes() / 60, m: d.getMonth() + 1 }; }
+  }
+  function kind(code) { /* WMO weather codes */
+    if (code === 45 || code === 48) return ['fog', 'fog'];
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return ['snow', 'snow'];
+    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95) return ['rain', code >= 95 ? 'thunder' : 'rain'];
+    return ['clear', code >= 3 ? 'overcast' : (code >= 1 ? 'some cloud' : 'clear sky')];
+  }
+  function note(t) { $('livenote').textContent = t; }
+  function apply() {
+    var now = stockholm(), sn = last && last.snow_depth > 0.02, season = sn || now.m === 12 || now.m <= 2 ? 'winter' : (now.m >= 9 && now.m <= 11 ? 'autumn' : 'summer');
+    var w = last ? kind(last.weather_code) : null, wname = w ? w[0] : weatherNow; if (wname === 'snow' && season !== 'winter') wname = 'rain';
+    internal = true; playing = false; $('play').setAttribute('aria-pressed', 'false');
+    if (season !== seasonNow) setSeason(season); if (wname !== weatherNow) setWeather(wname, true); setTime(now.h); internal = false;
+    if (last) note('Täby now: ' + Math.round(last.temperature_2m) + ' °C, ' + w[1] + (sn ? ', snow on the ground' : '') + '. Weather from Open-Meteo, updated every 10 minutes.');
+  }
+  function pull() {
+    if (busy) return; busy = true;
+    var ctl = window.AbortController ? new AbortController() : null, to = setTimeout(function () { if (ctl) ctl.abort(); }, 12000);
+    fetch(URL, ctl ? { signal: ctl.signal } : undefined).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (j) { if (!j || !j.current || typeof j.current.weather_code !== 'number') throw new Error('bad reply'); last = j.current; if (on) apply(); })
+      .catch(function () { if (on && !last) note('The clock and season are live, but this page could not reach the weather service, so the weather is whatever you pick.'); })
+      .then(function () { clearTimeout(to); busy = false; });
+  }
+  var internal = false, ticks = 0;
+  function set(v) {
+    on = v; $('live').setAttribute('aria-pressed', v ? 'true' : 'false'); clearInterval(timer);
+    if (!v) { note(''); return; }
+    note('Checking the weather…'); apply(); pull(); ticks = 0;
+    timer = setInterval(function () { if (document.hidden) return; apply(); if (++ticks % 10 === 0) pull(); }, 60000);
+  }
+  $('live').addEventListener('click', function () { set(!on); });
+  /* touching time, season or weather by hand takes you out of live */
+  ['tod', 'play', 'seasons', 'weathers'].forEach(function (id) { $(id).addEventListener(id === 'tod' ? 'input' : 'click', function () { if (on && !internal) set(false); }); });
+  return { set: set, isOn: function () { return on; }, kind: kind };
+})();
+
 /* ---------- where am I: street lookup and collisions ---------- */
 var sgrid = {}, SG = 60;
 roads.forEach(function (r, ri) {
@@ -1714,7 +1761,7 @@ function frame(now) {
 }
 $('veil').hidden = true;
 requestAnimationFrame(frame);
-window.__lahall = { setSeason: setSeason, setWeather: setWeather, me: me, setMode: setMode, goTo: goTo, traffic: traffic, hAt: hAt };
+window.__lahall = { live: live, setSeason: setSeason, setWeather: setWeather, me: me, setMode: setMode, goTo: goTo, traffic: traffic, hAt: hAt };
 }
 })();
 </script>

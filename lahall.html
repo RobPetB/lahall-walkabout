@@ -178,6 +178,7 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
           <button type="button" class="tool" id="snd" aria-pressed="false">Sound off</button>
           <button type="button" class="tool" id="live" aria-pressed="false">Live: match Täby right now</button>
           <span id="livenote" class="livenote" role="status"></span>
+          <button type="button" class="tool" id="sceneclose">Close</button>
         </div>
       </div>
       <div class="search">
@@ -1254,6 +1255,10 @@ function updateShadow() {
 }
 function setTime(t) { todOverride = ((t % 24) + 24) % 24; applySky(); }
 $('sky').addEventListener('click', function () { var p = $('scene'), open = p.hidden; p.hidden = !open; $('sky').setAttribute('aria-expanded', open ? 'true' : 'false'); if (open) $('tod').focus(); else canvas.focus(); });
+function closeScene() { if ($('scene').hidden) return; $('scene').hidden = true; $('sky').setAttribute('aria-expanded', 'false'); }
+$('sceneclose').addEventListener('click', function () { closeScene(); canvas.focus(); });
+canvas.addEventListener('pointerdown', closeScene);
+window.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeScene(); });
 $('tod').addEventListener('input', function () { playing = false; $('play').setAttribute('aria-pressed', 'false'); setTime(parseFloat(this.value)); });
 $('play').addEventListener('click', function () { playing = !playing; this.setAttribute('aria-pressed', playing ? 'true' : 'false'); if (playing && todOverride === null) todOverride = tod; });
 new MutationObserver(function () { todOverride = null; playing = false; $('play').setAttribute('aria-pressed', 'false'); applySky(); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -1395,7 +1400,7 @@ var live = (function () {
     var ctl = window.AbortController ? new AbortController() : null, to = setTimeout(function () { if (ctl) ctl.abort(); }, 12000);
     fetch(URL, ctl ? { signal: ctl.signal } : undefined).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (j) { if (!j || !j.current || typeof j.current.weather_code !== 'number') throw new Error('bad reply'); last = j.current; if (on) apply(); })
-      .catch(function () { if (on && !last) note('The clock and season are live, but this page could not reach the weather service, so the weather is whatever you pick.'); })
+      .catch(function () { if (on && !last) note('The clock and season are live. Published pages are not allowed to fetch outside weather data, so pick the weather yourself.'); })
       .then(function () { clearTimeout(to); busy = false; });
   }
   var internal = false, ticks = 0;

@@ -14,3 +14,9 @@ Data: © OpenStreetMap contributors via Overture Maps / Daylight; elevation from
 Source data for the larger extent is in `data2/`. Rebuild with:
 `cd tools && LX=1900 LZ=1700 LD=../data2/ python3 build.py` (terrain: same variables with `dem.py`; fetch: `fetchall.sh`; addresses: `addr2.py node 3`, `addr2.py way 6`).
 `world.small.json` is the last world file for the original 2.1 x 2.3 km extent.
+
+## Standalone copy (GitHub Pages)
+`docs/` holds a self-contained copy of the page (`index.html` + `world.json`) for GitHub Pages:
+Settings → Pages → Source "Deploy from a branch", branch `main`, folder `/docs`.
+After changing `lahall.html` or `world.json`, run `tools/make_site.sh` and commit `docs/`.
+Unlike the Claude artifact, this copy can reach the Open-Meteo weather service, so the Live button also syncs the weather.

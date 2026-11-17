@@ -849,7 +849,7 @@ var train = (function () {
   var stops = W.train.stops.slice().concat([45, len - 5]).sort(function (a, b) { return a - b; });
   var s = stops.length > 2 ? stops[1] : len / 2, dir = 1, v = 0, wait = 6, tmp = {};
   var ext = 0;
-  return { band: band, stations: W.train.stops.slice(), at: at, drive: function (sv, d, vv) { s = Math.max(0, Math.min(len, sv)); dir = d; v = vv; wait = 0; ext = 0.4; }, pos: function () { return at(s, tmp); }, cab: function () { var q = at(s + dir * 27.5, tmp); return { x: q.x, z: q.z, a: q.a + (dir > 0 ? 0 : Math.PI), v: v, wait: wait }; }, step: function (dt) {
+  return { band: band, nextStop: function () { var best = null; (W.train.stops || []).forEach(function (st, i) { var dd = (st - s) * dir; if (dd > 1 && (!best || dd < best.dist)) best = { name: (W.train.names || [])[i] || 'stop', dist: dd }; }); return best; }, stations: W.train.stops.slice(), at: at, drive: function (sv, d, vv) { s = Math.max(0, Math.min(len, sv)); dir = d; v = vv; wait = 0; ext = 0.4; }, pos: function () { return at(s, tmp); }, cab: function () { var q = at(s + dir * 27.5, tmp); return { x: q.x, z: q.z, a: q.a + (dir > 0 ? 0 : Math.PI), v: v, wait: wait }; }, step: function (dt) {
     if (ext > 0) { ext -= dt; }   /* a trip is driving the train */
     else if (wait > 0) { wait -= dt; }
     else {
@@ -2039,14 +2039,19 @@ map.addEventListener('click', function (e) {
 
 /* ---------- readout ---------- */
 var DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], hudT = 0, streetEl = $('street'), distEl = $('district'), readEl = $('readout'), lastStreet = '';
+var lastRoad = null;
 function hud() {
   var cp = Math.cos(me.pitch), gx = me.x, gz = me.z;
   if (me.mode !== 'walk' && me.pitch < -0.05) { var reach = Math.min(600, (me.y - hAt(me.x, me.z)) / Math.tan(-me.pitch)); gx = me.x - Math.sin(me.yaw) * reach; gz = me.z - Math.cos(me.yaw) * reach; }
   var tw = me.mode === 'route' ? journey.where() : null; if (tw) { gx = tw.x; gz = tw.z; }
-  var st = tw && tw.name ? tw.name : nearestStreet(gx, gz, me.mode === 'walk' ? 28 : 60), pl = nearestPlace(gx, gz);
+  /* in a vehicle the sign is about where the vehicle is, not where the camera looks */
+  if ((me.mode === 'drive' || me.mode === 'bike') && ride.on) { gx = ride.x; gz = ride.z; }
+  if (me.mode === 'train') { var ns = train.nextStop(); tw = { x: me.x, z: me.z, name: 'Roslagsbanan', next: ns ? 'next stop ' + ns.name : null, dist: ns ? ns.dist : 0 }; gx = me.x; gz = me.z; }
+  var st = tw && tw.name ? tw.name : nearestStreet(gx, gz, me.mode === 'walk' ? 28 : 60) || ((me.mode === 'drive' || me.mode === 'bike') ? lastRoad : null), pl = nearestPlace(gx, gz);
+  if (st) lastRoad = st;
   var title = st || (pl.d < 260 ? pl.name : 'Lahäll');
   if (title !== lastStreet) { streetEl.textContent = title; lastStreet = title; }
-  var sub = tw && tw.next ? 'Then ' + tw.next + ' · ' + journey.far(tw.dist) : 'Täby · ' + (pl.d < 160 ? pl.name : Math.round(pl.d / 10) * 10 + ' m to ' + pl.name);
+  var sub = tw && tw.next ? (me.mode === 'train' ? tw.next.charAt(0).toUpperCase() + tw.next.slice(1) : 'Then ' + tw.next) + ' · ' + journey.far(tw.dist) : 'Täby · ' + (pl.d < 160 ? pl.name : Math.round(pl.d / 10) * 10 + ' m to ' + pl.name);
   if (distEl.textContent !== sub) distEl.textContent = sub;
   var lat = M.lat0 - me.z / M.mz, lon = M.lon0 + me.x / M.mx, brg = ((-me.yaw * 180 / Math.PI) % 360 + 360) % 360;
   readEl.innerHTML = '<b>' + lat.toFixed(4) + '°N ' + lon.toFixed(4) + '°E</b> <span>·</span> ' + DIRS[Math.round(brg / 45) % 8] + ' ' + ('00' + Math.round(brg) % 360).slice(-3) + '° <span>·</span> ' +

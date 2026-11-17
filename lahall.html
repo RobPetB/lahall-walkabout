@@ -1784,6 +1784,13 @@ var journey = (function () {
   function dur(t) { var m = Math.max(1, Math.round(t / 60)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; }
   function far(d) { return d < 950 ? Math.round(d / 10) * 10 + ' m' : (d / 1000).toFixed(1) + ' km'; }
   var VERB = { walk: 'on foot', bike: 'by bike', drive: 'by car' };
+  /* clock time in Täby, some seconds from now */
+  function clock(plus) {
+    var t = new Date(Date.now() + (plus || 0) * 1000);
+    try { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', hour: '2-digit', minute: '2-digit' }).format(t); }
+    catch (e) { return ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2); }
+  }
+  function total(route) { var t = 0; route.legs.forEach(function (l) { t += l.time; }); return t; }
   function describe(route) {
     var total = 0, dist = 0; route.legs.forEach(function (l) { total += l.time; dist += l.len; });
     var parts = route.legs.map(function (l) {
@@ -1802,14 +1809,14 @@ var journey = (function () {
   }
   function start() {
     if (!cur) return false; li = 0; d = 0; head = null;
-    setMode('fly'); running = true; paused = false; lookYaw = lookPitch = 0; zoom = 1; $('tpause').textContent = 'Pause'; $('tpause').setAttribute('aria-pressed', 'false'); $('tripbar').hidden = false; barT = 0; me.mode = 'route'; app.setAttribute('data-mode', 'route'); MODES.forEach(function (k) { $('m-' + k).setAttribute('aria-pressed', 'false'); });
+    eta = clock(total(cur)); setMode('fly'); running = true; paused = false; lookYaw = lookPitch = 0; zoom = 1; $('tpause').textContent = 'Pause'; $('tpause').setAttribute('aria-pressed', 'false'); $('tripbar').hidden = false; barT = 0; me.mode = 'route'; app.setAttribute('data-mode', 'route'); MODES.forEach(function (k) { $('m-' + k).setAttribute('aria-pressed', 'false'); });
     return true;
   }
   function stop(arrived) {
     running = false; ride.car.visible = ride.bike.visible = false; walker.visible = false; $('tripbar').hidden = true;
     if (me.mode === 'route') { me.mode = 'fly'; setMode('walk'); }
     $('rplay').textContent = 'Start trip'; $('rplay').setAttribute('aria-pressed', 'false');
-    if (arrived) $('rnote').textContent = 'You have arrived. ' + describe(cur);
+    if (arrived) $('rnote').textContent = 'You have arrived. ' + describe(cur) + ' Having left when the trip started, you would be there at ' + eta + '.';
   }
   /* the figure you follow on the walking legs */
   var walker = new THREE.Group(), wlegs;
@@ -1819,12 +1826,13 @@ var journey = (function () {
     wlegs = [-1, 1].map(function (sd) { var l = mk(G.leg, lam('#2a3142')); l.position.set(sd * 0.1, 0.87, 0); walker.add(l); return l; });
     walker.visible = false; scene.add(walker);
   })();
-  var q = {}, q2 = {}, view = 'above', paused = false, lookYaw = 0, lookPitch = 0, zoom = 1, barT = 0;
+  var eta = '', q = {}, q2 = {}, view = 'above', paused = false, lookYaw = 0, lookPitch = 0, zoom = 1, barT = 0;
   var DOING = { walk: 'Walking', bike: 'Cycling', drive: 'Driving', train: 'On the train' };
   function bar() {
     var l = cur.legs[li], left = l.len - d; for (var i = li + 1; i < cur.legs.length; i++) left += cur.legs[i].len;
     var w = where(), on = w && w.name && l.mode !== 'train' ? ' on ' + w.name : '';
-    $('tripinfo').textContent = (paused ? 'Paused · ' : '') + DOING[l.mode] + (on || (l.to ? ' to ' + l.to : '')) + ' · ' + far(Math.max(0, left)) + ' to go';
+    var tl = l.time * (1 - d / (l.len || 1)); for (i = li + 1; i < cur.legs.length; i++) tl += cur.legs[i].time;
+    $('tripinfo').textContent = (paused ? 'Paused · ' : '') + DOING[l.mode] + (on || (l.to ? ' to ' + l.to : '')) + ' · ' + far(Math.max(0, left)) + ', ' + dur(tl) + ' to go · arrive ' + eta;
   }
   /* which road the traveller is on, and the next one coming up */
   function where() {
@@ -1891,7 +1899,7 @@ var journey = (function () {
     var route = plan(A, B, modeNow);
     if (!route) { note.textContent = 'No way through was found ' + (VERB[modeNow] || 'that way') + ' between ' + A.name + ' and ' + B.name + '. The connecting roads probably leave the mapped area; try another way of travelling.'; return null; }
     cur = route; draw(route, A); dropPin(B.name, B.x, B.z, standY(B.x, B.z, 1e9) - hAt(B.x, B.z));
-    note.textContent = 'From ' + A.name + ' to ' + B.name + '. ' + describe(route);
+    note.textContent = 'From ' + A.name + ' to ' + B.name + '. ' + describe(route) + ' Leave now and you arrive about ' + clock(total(route)) + '.';
     $('rplay').hidden = false; $('rspeed').hidden = false; $('rplay').textContent = 'Start trip';
     return route;
   }

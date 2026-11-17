@@ -95,6 +95,9 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
 .scene .seg { padding: 0; gap: 2px; flex-wrap: wrap; }
 .scene .seg button { flex: 1; padding: 8px 6px 6px; font-size: 12px; text-transform: none; letter-spacing: 0; border: 1px solid var(--line); }
 .tool.mini { padding: 6px 9px; min-height: 30px; }
+.scene .rin { width: 100%; box-sizing: border-box; cursor: text; font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 13px; }
+.scene .rin::placeholder { color: var(--muted); }
+#route { width: min(320px, calc(100vw - 32px)); }
 .livenote { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; line-height: 1.4; color: var(--panel-fg); }
 .livenote:empty { display: none; }
 .tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
@@ -136,11 +139,11 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
   .search input { width: 100%; }
   .hits { left: 0; right: 0; width: auto; }
   .seg { flex-wrap: wrap; }
-  .scene { position: fixed; left: 16px; right: 16px; top: 98px; width: auto; }
+  .scene, #route { position: fixed; left: 16px; right: 16px; top: 98px; width: auto; max-height: calc(100% - 110px); overflow: auto; }
   .bl { max-width: calc(100% - 160px); }
   .keys { display: none; }
   .readout { font-size: 11px; white-space: normal; }
-  .tl { max-width: calc(100% - 32px); top: 104px; }
+  .tl { max-width: calc(100% - 32px); top: 148px; }
   .tr { left: max(16px, env(safe-area-inset-left, 0px)); }
   .row { justify-content: flex-start; }
 }
@@ -179,6 +182,23 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
           <button type="button" class="tool" id="live" aria-pressed="false">Live: match Täby right now</button>
           <span id="livenote" class="livenote" role="status"></span>
           <button type="button" class="tool" id="sceneclose">Close</button>
+        </div>
+      </div>
+      <div class="scenewrap">
+        <button type="button" class="tool" id="rt" aria-expanded="false" aria-controls="route">Route</button>
+        <div class="panel scene" id="route" hidden>
+          <label for="rfrom">From</label>
+          <input class="tool rin" id="rfrom" type="text" list="rlist" placeholder="Where you are now" autocomplete="off" spellcheck="false">
+          <label for="rto">To</label>
+          <input class="tool rin" id="rto" type="text" list="rlist" placeholder="Address, street or place" autocomplete="off" spellcheck="false">
+          <datalist id="rlist"></datalist>
+          <span id="l-rmode">Travel by</span>
+          <div class="seg" role="group" aria-labelledby="l-rmode" id="rmodes"><button type="button" data-v="walk" aria-pressed="true">Walk</button><button type="button" data-v="drive" aria-pressed="false">Drive</button><button type="button" data-v="bike" aria-pressed="false">Cycle</button><button type="button" data-v="train" aria-pressed="false">Train</button></div>
+          <button type="button" class="tool" id="rgo">Show route</button>
+          <span id="rnote" class="livenote" role="status"></span>
+          <button type="button" class="tool" id="rplay" aria-pressed="false" hidden>Start trip</button>
+          <div class="seg" role="group" aria-label="Trip speed" id="rspeed" hidden><button type="button" data-v="1" aria-pressed="false">Real speed</button><button type="button" data-v="4" aria-pressed="true">4×</button><button type="button" data-v="16" aria-pressed="false">16×</button></div>
+          <button type="button" class="tool" id="rclose">Close</button>
         </div>
       </div>
       <div class="search">
@@ -318,7 +338,7 @@ var RW = { path: 1.3, footway: 1.8, steps: 1.8, bridleway: 1.6, track: 2.6, cycl
 var RORDER = Object.keys(RW);
 var roads = W.roads.map(function (r) { return { c: r.c, n: r.n, b: r.b, p: pts(r.p), z: r.z }; });
 var rails = W.rails.map(pts), streams = W.streams.map(pts);
-var PAVE = { residential: 1, tertiary: 1, unclassified: 1 }, WALK = 1.9;
+var PAVE = { residential: 1, tertiary: 1, unclassified: 1, secondary: 1 }, WALK = 1.9;
 /* where the railway rides on a bridge over a path or road, and the embankments up to it */
 var railSpans = (W.railspans || []).map(function (q) { var p = pts(q.p), x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; p.forEach(function (v) { x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); z0 = Math.min(z0, v.y); z1 = Math.max(z1, v.y); }); return { p: p, L: q.L / 10, D: q.D, bb: [x0 - q.D, z0 - q.D, x1 + q.D, z1 + q.D] }; });
 var railOn = false;
@@ -819,8 +839,10 @@ var train = (function () {
   }
   var stops = W.train.stops.slice().concat([45, len - 5]).sort(function (a, b) { return a - b; });
   var s = stops.length > 2 ? stops[1] : len / 2, dir = 1, v = 0, wait = 6, tmp = {};
-  return { band: band, pos: function () { return at(s, tmp); }, cab: function () { var q = at(s + dir * 27.5, tmp); return { x: q.x, z: q.z, a: q.a + (dir > 0 ? 0 : Math.PI), v: v, wait: wait }; }, step: function (dt) {
-    if (wait > 0) { wait -= dt; }
+  var ext = 0;
+  return { band: band, stations: W.train.stops.slice(), at: at, drive: function (sv, d, vv) { s = Math.max(0, Math.min(len, sv)); dir = d; v = vv; wait = 0; ext = 0.4; }, pos: function () { return at(s, tmp); }, cab: function () { var q = at(s + dir * 27.5, tmp); return { x: q.x, z: q.z, a: q.a + (dir > 0 ? 0 : Math.PI), v: v, wait: wait }; }, step: function (dt) {
+    if (ext > 0) { ext -= dt; }   /* a trip is driving the train */
+    else if (wait > 0) { wait -= dt; }
     else {
       var target = null;
       for (var i = 0; i < stops.length; i++) { var d = (stops[i] - s) * dir; if (d > 0.5 && (target === null || d < (target - s) * dir)) target = stops[i]; }
@@ -838,8 +860,8 @@ var train = (function () {
 /* ---------- cars and people ---------- */
 var traffic = (function () {
   var coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches;
-  var CAR = { motorway: 24, tertiary: 12, unclassified: 9, residential: 8, living_street: 4, service: 4 };
-  var PED = { footway: 1, path: 0.6, pedestrian: 2, cycleway: 0.8, steps: 0.5, residential: 0.7, living_street: 1, tertiary: 0.5, unclassified: 0.5, service: 0.3 };
+  var CAR = { motorway: 24, secondary: 14, tertiary: 12, unclassified: 9, residential: 8, living_street: 4, service: 4 };
+  var PED = { footway: 1, path: 0.6, pedestrian: 2, cycleway: 0.8, steps: 0.5, residential: 0.7, living_street: 1, tertiary: 0.5, secondary: 0.4, unclassified: 0.5, service: 0.3, track: 0.4, bridleway: 0.3, unknown: 0.3 };
   var R = roads.map(function (r) {
     var cum = [0]; for (var i = 1; i < r.p.length; i++) cum.push(cum[i - 1] + r.p[i].distanceTo(r.p[i - 1]));
     return { c: r.c, p: r.p, cum: cum, len: cum[cum.length - 1], w: RW[r.c] || 3, ok: r.b !== 2 && cum[cum.length - 1] > 3 };
@@ -874,9 +896,9 @@ var traffic = (function () {
       });
     });
     var pool = [], tot = 0; R.forEach(function (r, k) { if (use[k]) { tot += r.len * (allow[r.c] || 1) * (allow === CAR ? ({ motorway: 0.35, tertiary: 0.25, service: 0.04, living_street: 0.06 }[r.c] || 0.125) : 1); pool.push([k, tot]); } });
-    return { J: J, pick: function (seed) { var x = seed * tot; for (var i = 0; i < pool.length; i++) if (pool[i][1] >= x) return pool[i][0]; return pool[pool.length - 1][0]; } };
+    return { J: J, use: use, pick: function (seed) { var x = seed * tot; for (var i = 0; i < pool.length; i++) if (pool[i][1] >= x) return pool[i][0]; return pool[pool.length - 1][0]; } };
   }
-  var BIKE = { cycleway: 3, residential: 1, tertiary: 1, living_street: 1, unclassified: 1, track: 0.5, path: 0.3, footway: 0.25, service: 0.2 };
+  var BIKE = { cycleway: 3, residential: 1, tertiary: 1, secondary: 0.8, unknown: 0.2, living_street: 1, unclassified: 1, track: 0.5, path: 0.3, footway: 0.25, service: 0.2 };
   var carNet = network(CAR), pedNet = network(PED), bikeNet = network(BIKE), seedN = 1;
   /* real bus stops, each tied to the nearest drivable road; buses keep to roads that have stops, and the bigger roads */
   var stops = [], busRoad = {};
@@ -892,7 +914,7 @@ var traffic = (function () {
     });
     if (hit) { stops.push(hit); busRoad[hit.k] = 1; }
   }
-  R.forEach(function (r, k) { if (r.c === 'tertiary' || r.c === 'unclassified' || r.c === 'motorway') busRoad[k] = 1; r.stops = stops.filter(function (q) { return q.k === k; }); });
+  R.forEach(function (r, k) { if (r.c === 'tertiary' || r.c === 'secondary' || r.c === 'unclassified' || r.c === 'motorway') busRoad[k] = 1; r.stops = stops.filter(function (q) { return q.k === k; }); });
   function rand() { return rnd(seedN++ * 1.37 + 0.11 + performance.now() % 7); }
   function spawn(a, net, car) {
     a.r = net.pick(rand()); if (a.bus) for (var tries = 0; tries < 40 && !busRoad[a.r]; tries++) a.r = net.pick(rand()); var r = R[a.r]; a.s = rand() * r.len; a.dir = car && r.c === 'motorway' ? 1 : (rand() < 0.5 ? 1 : -1); a.cool = 3; a.ang = null;
@@ -1046,7 +1068,7 @@ var traffic = (function () {
     bodyM.instanceMatrix.needsUpdate = trimM.instanceMatrix.needsUpdate = lightM.instanceMatrix.needsUpdate = torsoM.instanceMatrix.needsUpdate = headM.instanceMatrix.needsUpdate = legM.instanceMatrix.needsUpdate = true;
   }
   step(0);
-  return { geo: { body: bodyG, trim: trimG, light: lightG, bike: bikeG, torso: torsoG, head: headG, leg: legG }, lightMat: lightMat, part: part, merge: merge, carJ: carNet.J, step: step, cars: cars, people: people, bikes: bikes, stops: stops, parked: parked.length, lot: parked[Math.floor(parked.length / 2)], R: R, at: at, links: [carNet, pedNet].map(function (n) { return n.J.reduce(function (s, l) { return s + l.length; }, 0); }) };
+  return { CAR: CAR, nets: { car: carNet, ped: pedNet, bike: bikeNet }, geo: { body: bodyG, trim: trimG, light: lightG, bike: bikeG, torso: torsoG, head: headG, leg: legG }, lightMat: lightMat, part: part, merge: merge, carJ: carNet.J, step: step, cars: cars, people: people, bikes: bikes, stops: stops, parked: parked.length, lot: parked[Math.floor(parked.length / 2)], R: R, at: at, links: [carNet, pedNet].map(function (n) { return n.J.reduce(function (s, l) { return s + l.length; }, 0); }) };
 })();
 
 /* ---------- street furniture ---------- */
@@ -1158,6 +1180,10 @@ var PLACES = [
   ['Djursholms Golfklubb', -283, 724, 14], ['Centralparken', 633, -944, 14], ['Lahällsviadukten · E18', -613, -411, 14], ['Vårfrukyrkan', -859, -1040, 20],
   ['Kryssarvallen', 883, -478, 12], ['Roslags Näsby trafikplats', -260, -1110, 14]
 ];
+(W.train.names || []).forEach(function (n, i) {
+  if (!n || PLACES.some(function (p) { return p[0].toLowerCase().indexOf(n.toLowerCase() + ' station') === 0; })) return;
+  var P = pts(W.train.p), s = W.train.stops[i], acc = 0; for (var j = 1; j < P.length; j++) { var d = P[j].distanceTo(P[j - 1]); if (acc + d >= s) { var t = (s - acc) / d; PLACES.push([n + ' station', Math.round(P[j - 1].x + (P[j].x - P[j - 1].x) * t), Math.round(P[j - 1].y + (P[j].y - P[j - 1].y) * t), 9]); break; } acc += d; }
+});
 function makeLabel(text, x, y, z) {
   var c = document.createElement('canvas'), k = c.getContext('2d'), f = '800 44px Overpass, Arial, sans-serif';
   k.font = f; var w = Math.ceil(k.measureText(text).width) + 56; c.width = w; c.height = 84;
@@ -1257,7 +1283,7 @@ function setTime(t) { todOverride = ((t % 24) + 24) % 24; applySky(); }
 $('sky').addEventListener('click', function () { var p = $('scene'), open = p.hidden; p.hidden = !open; $('sky').setAttribute('aria-expanded', open ? 'true' : 'false'); if (open) $('tod').focus(); else canvas.focus(); });
 function closeScene() { if ($('scene').hidden) return; $('scene').hidden = true; $('sky').setAttribute('aria-expanded', 'false'); }
 $('sceneclose').addEventListener('click', function () { closeScene(); canvas.focus(); });
-canvas.addEventListener('pointerdown', closeScene);
+canvas.addEventListener('pointerdown', function () { closeScene(); if (window.matchMedia && matchMedia('(max-width: 560px)').matches) { $('route').hidden = true; $('rt').setAttribute('aria-expanded', 'false'); } });
 window.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeScene(); });
 $('tod').addEventListener('input', function () { playing = false; $('play').setAttribute('aria-pressed', 'false'); setTime(parseFloat(this.value)); });
 $('play').addEventListener('click', function () { playing = !playing; this.setAttribute('aria-pressed', playing ? 'true' : 'false'); if (playing && todOverride === null) todOverride = tod; });
@@ -1489,6 +1515,7 @@ function tourPose() {
   me.yaw = Math.atan2(-dx, -dz); me.pitch = Math.atan2(dy, Math.hypot(dx, dz));
 }
 function setMode(m) {
+  if (typeof journey !== 'undefined' && journey && journey.isRunning()) journey.stop(false);
   if (m === 'walk') { var f = freeSpot(me.x, me.z); me.x = f[0]; me.z = f[1]; me.y = standY(me.x, me.z, 1e9) + EYE; me.pitch = Math.max(-0.5, Math.min(0.5, me.pitch * 0.3)); }
   if (m === 'fly' && me.mode === 'walk') { me.y += 45; me.pitch = -0.3; }
   if (m === 'drive' || m === 'bike') {
@@ -1509,6 +1536,7 @@ function goTo(x, z, close) {
   else { setMode('fly'); me.x = x - (close ? 38 : 70); me.z = z + (close ? 60 : 110); me.y = hAt(x, z) + (close ? 42 : 75); me.yaw = Math.atan2(-70, 110) + Math.PI; me.yaw = Math.atan2(-(x - me.x), -(z - me.z)); me.pitch = -0.5; }
 }
 
+var searchFind = null;
 /* ---------- search: addresses, streets, places, coordinates ---------- */
 (function () {
   var q = $('q'), box = $('hits'), cur = -1, shown = [];
@@ -1526,7 +1554,10 @@ function goTo(x, z, close) {
     p.forEach(function (v) { var d = (v.x - cx) * (v.x - cx) + (v.y - cz) * (v.y - cz); if (d < bd) { bd = d; best = v; } });
     idx.push({ t: W.names[k], n: norm(W.names[k]), x: best.x, z: best.y, kind: 'Street', rank: 1, k: +k });
   });
-  var placeIdx = PLACES.map(function (p) { return { t: p[0], n: norm(p[0]), x: p[1], z: p[2], kind: 'Place', rank: 2 }; });
+  var placeIdx = PLACES.map(function (p) { return { t: p[0], n: norm(p[0]), x: p[1], z: p[2], kind: 'Place', rank: 2 }; }), seenP = {};
+  placeIdx.forEach(function (e) { seenP[e.n] = 1; });
+  /* every named place on the map: shops, schools, parks, bus stops */
+  (W.places || []).forEach(function (p) { var n = norm(p[0]); if (seenP[n]) return; seenP[n] = 1; placeIdx.push({ t: p[0], n: n, x: p[1], z: p[2], kind: 'Place', rank: 2 }); });
   idx = idx.concat(placeIdx);
   function natural(a, b) { return a.rank - b.rank || a.t.localeCompare(b.t, 'sv', { numeric: true }); }
   function find(text) {
@@ -1608,7 +1639,235 @@ function goTo(x, z, close) {
     else if (ev.key === 'Escape') { close(); canvas.focus(); }
     ev.stopPropagation();
   });
+  searchFind = find;
   window.__lahall_search = { find: find, pick: function (text) { q.value = text; render(); var i = 0; while (i < shown.length && shown[i].note) i++; pick(i); } };
+})();
+
+/* ---------- getting from A to B: route finding and the trip itself ---------- */
+var journey = (function () {
+  var R = traffic.R, FOOTSPEED = 1.4, o = {};
+  var SPEED = {
+    walk: function (c) { return c === 'steps' ? 0.7 : FOOTSPEED; },
+    bike: function (c) { return c === 'cycleway' ? 5 : (c === 'path' || c === 'footway' || c === 'track' ? 3 : 4.5); },
+    drive: function (c) { return (traffic.CAR[c] || 5) * 0.85; }
+  };
+  var NETS = { walk: traffic.nets.ped, bike: traffic.nets.bike, drive: traffic.nets.car }, graphs = {};
+  function graph(mode) {
+    if (graphs[mode]) return graphs[mode];
+    var J = NETS[mode].J, use = NETS[mode].use, pos = R.map(function (r, k) { return use[k] ? [0, r.len] : null; });
+    J.forEach(function (L, k) { if (!use[k]) return; L.forEach(function (e) { pos[k].push(e.s); e.to.forEach(function (t) { if (use[t[0]]) pos[t[0]].push(t[1]); }); }); });
+    var base = [], nodeK = [], nodeS = [], adj = [];
+    pos.forEach(function (p, k) {
+      if (!p) return; p.sort(function (a, b) { return a - b; });
+      var u = [p[0]]; for (var i = 1; i < p.length; i++) if (p[i] - u[u.length - 1] > 0.5) u.push(p[i]);
+      pos[k] = u; base[k] = nodeK.length; u.forEach(function (s) { nodeK.push(k); nodeS.push(s); adj.push([]); });
+    });
+    function idx(k, s) { var p = pos[k], best = 0; for (var i = 1; i < p.length; i++) if (Math.abs(p[i] - s) < Math.abs(p[best] - s)) best = i; return base[k] + best; }
+    pos.forEach(function (p, k) {
+      if (!p) return; var v = SPEED[mode](R[k].c), oneway = mode === 'drive' && R[k].c === 'motorway';
+      for (var i = 1; i < p.length; i++) { var t = (p[i] - p[i - 1]) / v; adj[base[k] + i - 1].push([base[k] + i, t]); if (!oneway) adj[base[k] + i].push([base[k] + i - 1, t]); }
+    });
+    J.forEach(function (L, k) { if (!use[k]) return; L.forEach(function (e) { var a = idx(k, e.s); e.to.forEach(function (t) { if (use[t[0]]) adj[a].push([idx(t[0], t[1]), mode === 'drive' ? 2 : 0.5]); }); }); });
+    return (graphs[mode] = { pos: pos, base: base, nodeK: nodeK, nodeS: nodeS, adj: adj, use: use });
+  }
+  /* nearest usable road to a point, and how far along it */
+  function snap(G, x, z, mode) {
+    var best = null, bd = 1e9;
+    for (var k = 0; k < R.length; k++) {
+      if (!G.use[k] || (mode === 'drive' && R[k].c === 'motorway')) continue;
+      var r = R[k], bb = roads[k].bb; if (x < bb[0] - bd || x > bb[2] + bd || z < bb[1] - bd || z > bb[3] + bd) continue;
+      for (var j = 1; j < r.p.length; j++) {
+        var ax = r.p[j - 1].x, az = r.p[j - 1].y, ex = r.p[j].x - ax, ez = r.p[j].y - az, l2 = ex * ex + ez * ez; if (!l2) continue;
+        var t = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / l2)), d = Math.hypot(ax + ex * t - x, az + ez * t - z);
+        if (d < bd) { bd = d; best = { k: k, s: r.cum[j - 1] + Math.sqrt(l2) * t, d: d }; }
+      }
+    }
+    return best;
+  }
+  function dijkstra(G, seeds) {
+    var n = G.adj.length, dist = new Float64Array(n).fill(Infinity), prev = new Int32Array(n).fill(-1), heap = [];
+    function push(d, v) { heap.push([d, v]); var i = heap.length - 1; while (i > 0) { var p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; var t = heap[p]; heap[p] = heap[i]; heap[i] = t; i = p; } }
+    function pop() { var top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; var i = 0; for (;;) { var l = 2 * i + 1, r = l + 1, m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; var t = heap[m]; heap[m] = heap[i]; heap[i] = t; i = m; } } return top; }
+    seeds.forEach(function (s) { if (s[1] < dist[s[0]]) { dist[s[0]] = s[1]; push(s[1], s[0]); } });
+    while (heap.length) { var q = pop(), d = q[0], v = q[1]; if (d > dist[v]) continue; var A = G.adj[v]; for (var i = 0; i < A.length; i++) { var nd = d + A[i][1], w = A[i][0]; if (nd < dist[w]) { dist[w] = nd; prev[w] = v; push(nd, w); } } }
+    return { dist: dist, prev: prev };
+  }
+  /* the two graph nodes either side of a point on a road, with the time to reach each */
+  function ends(G, sn, mode) {
+    var p = G.pos[sn.k], i = 0; while (i < p.length - 2 && p[i + 1] < sn.s) i++;
+    var v = SPEED[mode](R[sn.k].c), oneway = mode === 'drive' && R[sn.k].c === 'motorway';
+    return { i: i, lo: [G.base[sn.k] + i, (sn.s - p[i]) / v], hi: [G.base[sn.k] + i + 1, (p[i + 1] - sn.s) / v], oneway: oneway, v: v };
+  }
+  function along(k, s0, s1, out) {
+    var r = R[k], n = Math.max(1, Math.ceil(Math.abs(s1 - s0) / 6)), cuts = [s0];
+    r.cum.forEach(function (c) { if (c > Math.min(s0, s1) + 0.05 && c < Math.max(s0, s1) - 0.05) cuts.push(c); });
+    for (var i = 1; i < n; i++) cuts.push(s0 + (s1 - s0) * i / n);
+    cuts.push(s1); cuts.sort(function (a, b) { return s1 >= s0 ? a - b : b - a; });
+    cuts.forEach(function (s) { traffic.at(k, s, o); out.push({ x: o.x, z: o.z, y: hAt(o.x, o.z) + o.l }); });
+  }
+  function leg(mode, pts, time, label) {
+    var cum = [0]; for (var i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
+    return { mode: mode, pts: pts, cum: cum, len: cum[cum.length - 1], time: time, label: label };
+  }
+  function pt(x, z) { return { x: x, z: z, y: standY(x, z, 1e9) }; }
+  /* one leg by one means of travel; null when the two ends are not connected */
+  function single(A, B, mode) {
+    var G = graph(mode), a = snap(G, A.x, A.z, mode), b = snap(G, B.x, B.z, mode); if (!a || !b) return null;
+    var ea = ends(G, a, mode), eb = ends(G, b, mode), seeds = [ea.hi]; if (!ea.oneway) seeds.push(ea.lo);
+    var D = dijkstra(G, seeds), best = Infinity, via = -1, pts = [pt(A.x, A.z)];
+    if (isFinite(D.dist[eb.lo[0]]) && D.dist[eb.lo[0]] + eb.lo[1] < best) { best = D.dist[eb.lo[0]] + eb.lo[1]; via = eb.lo[0]; }
+    if (!eb.oneway && isFinite(D.dist[eb.hi[0]]) && D.dist[eb.hi[0]] + eb.hi[1] < best) { best = D.dist[eb.hi[0]] + eb.hi[1]; via = eb.hi[0]; }
+    if (a.k === b.k && ea.i === eb.i && (!ea.oneway || b.s >= a.s) && Math.abs(b.s - a.s) / ea.v < best) { best = Math.abs(b.s - a.s) / ea.v; via = -2; }
+    if (via === -1) return null;
+    if (via === -2) along(a.k, a.s, b.s, pts);
+    else {
+      var chain = []; for (var v = via; v >= 0; v = D.prev[v]) chain.push(v); chain.reverse();
+      along(a.k, a.s, G.nodeS[chain[0]], pts);
+      for (var i = 1; i < chain.length; i++) if (G.nodeK[chain[i]] === G.nodeK[chain[i - 1]]) along(G.nodeK[chain[i]], G.nodeS[chain[i - 1]], G.nodeS[chain[i]], pts);
+      along(b.k, G.nodeS[via], b.s, pts);
+    }
+    pts.push(pt(B.x, B.z));
+    return leg(mode, pts, best + (a.d + b.d) / FOOTSPEED, null);
+  }
+  var STATIONS = train.stations.map(function (s, i) { var q = train.at(s, {}); return { s: s, x: q.x, z: q.z, name: (W.train.names || [])[i] || 'the stop' }; });
+  function plan(A, B, mode) {
+    if (mode !== 'train') { var l = single(A, B, mode); return l ? { legs: [l] } : null; }
+    var direct = single(A, B, 'walk'), best = null;
+    STATIONS.forEach(function (S1) {
+      var d1 = Math.hypot(S1.x - A.x, S1.z - A.z);
+      STATIONS.forEach(function (S2) {
+        if (S1 === S2) return; var d2 = Math.hypot(S2.x - B.x, S2.z - B.z), between = STATIONS.filter(function (q) { return (q.s - S1.s) * (q.s - S2.s) < 0; }).length;
+        var ride = Math.abs(S2.s - S1.s) / 11 + 25 * between + 90, guess = d1 * 1.3 / FOOTSPEED + ride + d2 * 1.3 / FOOTSPEED;
+        if (!best || guess < best.guess) best = { S1: S1, S2: S2, ride: ride, guess: guess };
+      });
+    });
+    if (!best) return direct ? { legs: [direct], note: 'There is no train stop to use here, so this is the walk.' } : null;
+    var w1 = single(A, best.S1, 'walk'), w2 = single(best.S2, B, 'walk');
+    if (!w1 || !w2 || (direct && direct.time <= w1.time + best.ride + w2.time)) return direct ? { legs: [direct], note: 'Walking all the way is quicker than taking the train for this trip.' } : null;
+    var pts = [], n = Math.max(2, Math.ceil(Math.abs(best.S2.s - best.S1.s) / 8));
+    for (var i = 0; i <= n; i++) { var q = train.at(best.S1.s + (best.S2.s - best.S1.s) * i / n, {}); pts.push({ x: q.x, z: q.z, y: hAt(q.x, q.z) + railLift(q.x, q.z) }); }
+    var t = leg('train', pts, best.ride, null); t.s0 = best.S1.s; t.s1 = best.S2.s; t.from = best.S1.name; t.to = best.S2.name;
+    w1.to = best.S1.name; w2.from = best.S2.name;
+    return { legs: [w1, t, w2] };
+  }
+
+  /* --- drawing the route --- */
+  var COL = { walk: '#1b6fe0', bike: '#12a05c', drive: '#d0531c', train: '#8a3fd1' }, mesh = null, startPin = null, cur = null, mini = [];
+  function clear() { if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh = null; } if (startPin) startPin.visible = false; mini = []; cur = null; }
+  function draw(route, A) {
+    var P = [], C = [], c = new THREE.Color();
+    route.legs.forEach(function (l) {
+      c.set(COL[l.mode]); var hw = l.mode === 'train' ? 1.1 : 0.7, pts = l.pts;
+      for (var i = 1; i < pts.length; i++) {
+        var a = pts[i - 1], b = pts[i], dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz); if (d < 0.01) continue;
+        var nx = -dz / d * hw, nz = dx / d * hw, ya = a.y + 0.4, yb = b.y + 0.4;
+        P.push(a.x + nx, ya, a.z + nz, a.x - nx, ya, a.z - nz, b.x + nx, yb, b.z + nz, a.x - nx, ya, a.z - nz, b.x - nx, yb, b.z - nz, b.x + nx, yb, b.z + nz);
+        for (var k = 0; k < 6; k++) C.push(c.r, c.g, c.b);
+      }
+      mini.push({ c: COL[l.mode], p: pts });
+    });
+    var g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+    mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.88, depthWrite: false, fog: false })); mesh.frustumCulled = false; mesh.renderOrder = 2; scene.add(mesh);
+    if (!startPin) { startPin = new THREE.Group(); var m = new THREE.MeshBasicMaterial({ color: '#12a05c' }), pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 7, 6), m), ball = new THREE.Mesh(new THREE.SphereGeometry(1.7, 12, 10), m); pole.position.y = 3.5; ball.position.y = 7.6; startPin.add(pole); startPin.add(ball); scene.add(startPin); }
+    startPin.position.set(A.x, standY(A.x, A.z, 1e9), A.z); startPin.visible = true;
+  }
+  function dur(t) { var m = Math.max(1, Math.round(t / 60)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; }
+  function far(d) { return d < 950 ? Math.round(d / 10) * 10 + ' m' : (d / 1000).toFixed(1) + ' km'; }
+  var VERB = { walk: 'on foot', bike: 'by bike', drive: 'by car' };
+  function describe(route) {
+    var total = 0, dist = 0; route.legs.forEach(function (l) { total += l.time; dist += l.len; });
+    var parts = route.legs.map(function (l) {
+      if (l.mode === 'train') return 'train ' + l.from + ' to ' + l.to + ', ' + dur(l.time) + ' with the wait';
+      return (route.legs.length > 1 ? 'walk ' + far(l.len) + (l.to ? ' to ' + l.to : '') + ', ' + dur(l.time) : far(l.len) + ', about ' + dur(l.time) + ' ' + VERB[l.mode]);
+    });
+    return (route.legs.length > 1 ? 'About ' + dur(total) + ' in all: ' + parts.join('; ') + '.' : parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + '.') + (route.note ? ' ' + route.note : '');
+  }
+
+  /* --- the trip: the camera travels the route --- */
+  var li = 0, d = 0, mult = 4, running = false, head = 0;
+  function posAt(l, dd, out) {
+    var c = l.cum, i = 1; dd = Math.max(0, Math.min(l.len, dd)); while (i < c.length - 1 && c[i] < dd) i++;
+    var a = l.pts[i - 1], b = l.pts[i], t = (dd - c[i - 1]) / (c[i] - c[i - 1] || 1);
+    out.x = a.x + (b.x - a.x) * t; out.z = a.z + (b.z - a.z) * t; out.y = a.y + (b.y - a.y) * t; out.h = Math.atan2(b.x - a.x, b.z - a.z); return out;
+  }
+  function start() {
+    if (!cur) return false; li = 0; d = 0; head = null;
+    setMode('fly'); running = true; me.mode = 'route'; app.setAttribute('data-mode', 'route'); MODES.forEach(function (k) { $('m-' + k).setAttribute('aria-pressed', 'false'); });
+    return true;
+  }
+  function stop(arrived) {
+    running = false; ride.car.visible = ride.bike.visible = false;
+    if (me.mode === 'route') { me.mode = 'fly'; setMode('walk'); }
+    $('rplay').textContent = 'Start trip'; $('rplay').setAttribute('aria-pressed', 'false');
+    if (arrived) $('rnote').textContent = 'You have arrived. ' + describe(cur);
+  }
+  var q = {}, q2 = {};
+  function step(dt) {
+    if (!running || !cur) { stop(false); return; }
+    var l = cur.legs[li], v = l.len / Math.max(1, l.time - (l.mode === 'train' ? 90 : 0));
+    d += v * mult * dt;
+    if (d >= l.len) { if (li < cur.legs.length - 1) { li++; d = 0; head = null; l = cur.legs[li]; } else { posAt(l, l.len, q); me.x = q.x; me.z = q.z; stop(true); return; } }
+    posAt(l, d, q); var k = Math.min(1, dt * 5);
+    if (head === null) head = q.h; var dh = q.h - head; while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI; head += dh * Math.min(1, dt * 6);
+    ride.car.visible = l.mode === 'drive'; ride.bike.visible = l.mode === 'bike';
+    if (l.mode === 'train') {
+      var dir = l.s1 > l.s0 ? 1 : -1; train.drive(l.s0 + dir * d - dir * 27.5, dir, v * mult);
+      me.x = q.x; me.z = q.z; me.y = q.y + 3.0; me.yaw = head + Math.PI; me.pitch += (-0.04 - me.pitch) * k;
+    } else if (l.mode === 'walk') {
+      me.x = q.x; me.z = q.z; me.y = q.y + EYE; me.yaw = head + Math.PI; me.pitch += (-0.06 - me.pitch) * k;
+    } else {
+      var car = l.mode === 'drive', veh = car ? ride.car : ride.bike, hx = Math.sin(head), hz = Math.cos(head), back = car ? 8.5 : 5;
+      posAt(l, d + 2, q2); var up = q2.y; posAt(l, d - 2, q2);
+      veh.position.set(q.x, q.y + 0.09, q.z); veh.rotation.set(-Math.atan((up - q2.y) / 4), head, 0);
+      if (!car) { var ph = performance.now() / 1000 * 7; ride.legs[0].rotation.x = -0.6 + Math.sin(ph) * 0.45; ride.legs[1].rotation.x = -0.6 - Math.sin(ph) * 0.45; }
+      var cx = q.x - hx * back, cz = q.z - hz * back, cy = Math.max(q.y + (car ? 3.3 : 2.4), hAt(cx, cz) + 1.2);
+      me.x += (cx - me.x) * k; me.z += (cz - me.z) * k; me.y += (cy - me.y) * k;
+      var wy = Math.atan2(-(q.x + hx * 6 - me.x), -(q.z + hz * 6 - me.z)), dy = wy - me.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI; me.yaw += dy * Math.min(1, dt * 7); me.pitch += (-0.17 - me.pitch) * k;
+    }
+    me.speed = v;   /* the readout shows the real speed, whatever the fast-forward */
+  }
+
+  /* --- the panel --- */
+  function resolve(text) {
+    text = (text || '').trim(); if (!text) return null;
+    var all = searchFind(text).filter(function (e) { return !e.note && typeof e.x === 'number'; }), low = text.toLowerCase();
+    var hit = all.filter(function (e) { return e.t.toLowerCase() === low; })[0] || all[0];   /* an exact name beats a longer one that starts the same */
+    return hit ? { x: hit.x, z: hit.z, name: hit.t } : null;
+  }
+  var modeNow = 'walk';
+  function go() {
+    var ft = $('rfrom').value.trim(), A = ft ? resolve(ft) : { x: ride.on ? ride.x : me.x, z: ride.on ? ride.z : me.z, name: 'where you are' }, B = resolve($('rto').value), note = $('rnote');
+    if (running) stop(false); clear(); $('rplay').hidden = true; $('rspeed').hidden = true;
+    if (!A) { note.textContent = 'Could not find "' + ft + '". Try a street name, an address or a place.'; return null; }
+    if (!B) { note.textContent = $('rto').value.trim() ? 'Could not find "' + $('rto').value.trim() + '". Try a street name, an address or a place.' : 'Say where you want to go.'; return null; }
+    if (Math.hypot(A.x - B.x, A.z - B.z) < 5) { note.textContent = 'Those are the same place.'; return null; }
+    var route = plan(A, B, modeNow);
+    if (!route) { note.textContent = 'No way through was found ' + (VERB[modeNow] || 'that way') + ' between ' + A.name + ' and ' + B.name + '. The connecting roads probably leave the mapped area; try another way of travelling.'; return null; }
+    cur = route; draw(route, A); dropPin(B.name, B.x, B.z, standY(B.x, B.z, 1e9) - hAt(B.x, B.z));
+    note.textContent = 'From ' + A.name + ' to ' + B.name + '. ' + describe(route);
+    $('rplay').hidden = false; $('rspeed').hidden = false; $('rplay').textContent = 'Start trip';
+    return route;
+  }
+  function fill(inp) { var dl = $('rlist'); dl.textContent = ''; searchFind(inp.value).filter(function (e) { return !e.note; }).slice(0, 8).forEach(function (e) { var op = document.createElement('option'); op.value = e.t; dl.appendChild(op); }); }
+  ['rfrom', 'rto'].forEach(function (id) { $(id).addEventListener('input', function () { fill(this); }); $(id).addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } e.stopPropagation(); }); });
+  $('rmodes').addEventListener('click', function (e) { var v = e.target.getAttribute && e.target.getAttribute('data-v'); if (!v) return; modeNow = v; [].forEach.call(this.children, function (b) { b.setAttribute('aria-pressed', b === e.target ? 'true' : 'false'); }); if ($('rto').value.trim()) go(); });
+  $('rspeed').addEventListener('click', function (e) { var v = e.target.getAttribute && e.target.getAttribute('data-v'); if (!v) return; mult = +v; [].forEach.call(this.children, function (b) { b.setAttribute('aria-pressed', b === e.target ? 'true' : 'false'); }); });
+  $('rgo').addEventListener('click', go);
+  $('rplay').addEventListener('click', function () { if (running) { stop(false); return; } if (start()) { this.textContent = 'Stop trip'; this.setAttribute('aria-pressed', 'true'); if (matchMedia('(max-width: 560px)').matches) closeRoute(); canvas.focus(); } });
+  function closeRoute() { $('route').hidden = true; $('rt').setAttribute('aria-expanded', 'false'); }
+  $('rt').addEventListener('click', function () { var p = $('route'), open = p.hidden; closeScene(); p.hidden = !open; this.setAttribute('aria-expanded', open ? 'true' : 'false'); if (open) $('rto').focus(); });
+  $('sky').addEventListener('click', closeRoute);
+  $('rclose').addEventListener('click', function () { closeRoute(); canvas.focus(); });
+  window.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeRoute(); });
+  function components(mode) {
+    var G = graph(mode), n = G.adj.length, comp = new Int32Array(n).fill(-1), sizes = [], und = G.adj.map(function () { return []; });
+    G.adj.forEach(function (A, v) { A.forEach(function (e) { und[v].push(e[0]); und[e[0]].push(v); }); });
+    for (var v = 0; v < n; v++) { if (comp[v] >= 0) continue; var st = [v], c = sizes.length, len = 0; comp[v] = c; while (st.length) { var u = st.pop(); und[u].forEach(function (w) { if (comp[w] < 0) { comp[w] = c; st.push(w); } }); } sizes.push(0); }
+    var km = sizes.map(function () { return 0; }), ex = sizes.map(function () { return null; });
+    G.pos.forEach(function (p, k) { if (!p) return; var c = comp[G.base[k]]; km[c] += R[k].len; if (!ex[c] || R[k].len > ex[c][3]) ex[c] = [R[k].c, Math.round(R[k].p[0].x), Math.round(R[k].p[0].y), R[k].len]; });
+    return km.map(function (m, i) { return [Math.round(m), ex[i].slice(0, 3)]; }).sort(function (a, b) { return b[0] - a[0]; }).slice(0, 12);
+  }
+  return { components: components, step: step, go: go, start: start, stop: stop, plan: plan, isRunning: function () { return running; }, mini: function () { return mini; }, setMode: function (m) { modeNow = m; }, state: function () { return { li: li, d: d, legs: cur ? cur.legs.map(function (l) { return [l.mode, Math.round(l.len), Math.round(l.time)]; }) : null }; } };
 })();
 
 window.addEventListener('keydown', function (e) {
@@ -1654,6 +1913,7 @@ canvas.addEventListener('wheel', function (e) { if (me.mode === 'tour') return; 
 });
 
 function step(dt) {
+  if (me.mode === 'route') { journey.step(dt); return; }
   if (me.mode === 'tour') { if (!reduced) tourT += dt * 26 / tourLen; tourPose(); me.speed = reduced ? 0 : 26; return; }
   var f = (keys.w || keys.ArrowUp ? 1 : 0) - (keys.s || keys.ArrowDown ? 1 : 0) - joy.y;
   var s = (keys.d ? 1 : 0) - (keys.a ? 1 : 0) + joy.x;
@@ -1715,6 +1975,7 @@ function drawMapBase() {
 function drawMap() {
   mctx.drawImage(mapBase, 0, 0);
   var t = train.pos(), q = mxy(t.x, t.z); mctx.fillStyle = skyNow === 'dusk' ? '#ffd58a' : '#1b4f93'; mctx.fillRect(q[0] - 4, q[1] - 4, 8, 8);
+  journey.mini().forEach(function (l) { mctx.beginPath(); l.p.forEach(function (v, i) { var w = mxy(v.x, v.z); if (i) mctx.lineTo(w[0], w[1]); else mctx.moveTo(w[0], w[1]); }); mctx.lineWidth = 4; mctx.strokeStyle = l.c; mctx.lineJoin = 'round'; mctx.stroke(); });
   q = mxy(me.x, me.z); mctx.save(); mctx.translate(q[0], q[1]); mctx.rotate(-me.yaw);
   mctx.beginPath(); mctx.moveTo(0, -13); mctx.lineTo(8, 9); mctx.lineTo(0, 4); mctx.lineTo(-8, 9); mctx.closePath();
   mctx.fillStyle = '#e2452f'; mctx.strokeStyle = '#fff'; mctx.lineWidth = 2.5; mctx.fill(); mctx.stroke(); mctx.restore();
@@ -1735,7 +1996,7 @@ function hud() {
   if (distEl.textContent !== sub) distEl.textContent = sub;
   var lat = M.lat0 - me.z / M.mz, lon = M.lon0 + me.x / M.mx, brg = ((-me.yaw * 180 / Math.PI) % 360 + 360) % 360;
   readEl.innerHTML = '<b>' + lat.toFixed(4) + '°N ' + lon.toFixed(4) + '°E</b> <span>·</span> ' + DIRS[Math.round(brg / 45) % 8] + ' ' + ('00' + Math.round(brg) % 360).slice(-3) + '° <span>·</span> ' +
-    ({ walk: 'on foot, ', drive: 'driving, ', bike: 'cycling, ', train: 'on the train, ' }[me.mode] || 'flying, ') + Math.round(me.mode === 'walk' ? me.y - EYE : me.y) + ' m above sea' + ' <span>·</span> ' + Math.round(me.speed * 3.6) + ' km/h';
+    ({ route: 'on a trip, ', walk: 'on foot, ', drive: 'driving, ', bike: 'cycling, ', train: 'on the train, ' }[me.mode] || 'flying, ') + Math.round(me.mode === 'walk' ? me.y - EYE : me.y) + ' m above sea' + ' <span>·</span> ' + Math.round(me.speed * 3.6) + ' km/h';
 }
 
 /* ---------- loop ---------- */
@@ -1767,7 +2028,7 @@ function frame(now) {
 }
 $('veil').hidden = true;
 requestAnimationFrame(frame);
-window.__lahall = { live: live, setSeason: setSeason, setWeather: setWeather, me: me, setMode: setMode, goTo: goTo, traffic: traffic, hAt: hAt };
+window.__lahall = { dbg: function (mode) { return journey.components(mode); }, journey: journey, live: live, setSeason: setSeason, setWeather: setWeather, me: me, setMode: setMode, goTo: goTo, traffic: traffic, hAt: hAt };
 }
 })();
 </script>

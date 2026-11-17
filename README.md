@@ -20,3 +20,6 @@ Source data for the larger extent is in `data2/`. Rebuild with:
 Settings → Pages → Source "Deploy from a branch", branch `main`, folder `/docs`.
 After changing `lahall.html` or `world.json`, run `tools/make_site.sh` and commit `docs/`.
 Unlike the Claude artifact, this copy can reach the Open-Meteo weather service, so the Live button also syncs the weather.
+
+## Route planner
+The Route button plans a trip between two addresses, streets or places, on foot, by car, by bike, or by train with walking at each end, and can play the trip back. Routing runs in the browser on the same road graph the traffic uses. Car trips to the Enebyberg/Ekeby corner in the south-west fail by design: those streets only connect to the rest by roads outside the mapped area.

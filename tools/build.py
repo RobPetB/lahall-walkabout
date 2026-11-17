@@ -132,7 +132,10 @@ ml.sort(key=lambda l:l.distance(Point(1,-4)))
 path=ml[0].intersection(box(-XW-150,-ZW-150,XW+150,ZW+150))
 path=sorted(lines(path),key=lambda l:-l.length)[0].simplify(0.3)
 halt=[g for g,p in infra if p.get('class')=='railway_halt']
-W['train']={'p':flat(path.coords),'stops':sorted(set(round(path.project(h)) for h in halt))}
+_hs={}
+for g,p in infra:
+    if p.get('class')=='railway_halt' and path.distance(g)<60: _hs[round(path.project(g))]=nm(p) or ''
+W['train']={'p':flat(path.coords),'stops':sorted(_hs),'names':[_hs[k] for k in sorted(_hs)]}
 print('halts',[(round(h.x),round(h.y),nm(p)) for h,p in [(g,p) for g,p in infra if p.get('class')=='railway_halt']],file=sys.stderr)
 # ---------- buildings
 def _pl(g):
@@ -281,7 +284,12 @@ for b in B:
 for g,p in L('place'):
     n=nm(p)
     if n and BOX.contains(g): P.append({'n':n,'k':'poi:'+str(p.get('basic_category')),'x':round(g.x),'z':round(g.y)})
-W['places']=[]
+_seen=set(); W['places']=[]
+for q in P:
+    key=(q['n'].strip().lower(),q['x']//40,q['z']//40)
+    if key in _seen or len(q['n'])>60: continue
+    _seen.add(key); W['places'].append([q['n'].strip(),q['x'],q['z']])
+print('places',len(W['places']),file=sys.stderr)
 
 # ---------- terrain
 import numpy as np

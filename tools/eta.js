@@ -11,6 +11,6 @@ const { chromium } = require('playwright');
     console.log(m, await p.evaluate(() => document.getElementById('rnote').textContent));
   }
   await p.evaluate(() => { document.getElementById('rplay').click(); window.__lahall.journey.toLeg(1, 700); }); await p.waitForTimeout(4000);
-  console.log('bar', await p.evaluate(() => document.getElementById('tripinfo').textContent), '| now', new Date().toISOString());
+  for (const [i, dd] of [[0, 10], [1, 700], [2, 5]]) { await p.evaluate(([i, dd]) => window.__lahall.journey.toLeg(i, dd), [i, dd]); await p.waitForTimeout(2500); console.log('bar', await p.evaluate(() => document.getElementById('tripinfo').textContent)); }
   console.log(errs.length ? errs.join('\n') : 'no errors'); await b.close();
 })();

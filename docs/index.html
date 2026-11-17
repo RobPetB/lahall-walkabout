@@ -175,7 +175,7 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
           <span id="l-season">Season</span>
           <div class="seg" role="group" aria-labelledby="l-season" id="seasons"><button type="button" data-v="summer" aria-pressed="true">Summer</button><button type="button" data-v="autumn" aria-pressed="false">Autumn</button><button type="button" data-v="winter" aria-pressed="false">Winter</button></div>
           <span id="l-weather">Weather</span>
-          <div class="seg" role="group" aria-labelledby="l-weather" id="weathers"><button type="button" data-v="clear" aria-pressed="true">Clear</button><button type="button" data-v="rain" aria-pressed="false">Rain</button><button type="button" data-v="fog" aria-pressed="false">Fog</button><button type="button" data-v="snow" aria-pressed="false">Snow</button></div>
+          <div class="seg" role="group" aria-labelledby="l-weather" id="weathers"><button type="button" data-v="clear" aria-pressed="true">Clear</button><button type="button" data-v="cloudy" aria-pressed="false">Cloudy</button><button type="button" data-v="rain" aria-pressed="false">Rain</button><button type="button" data-v="fog" aria-pressed="false">Fog</button><button type="button" data-v="snow" aria-pressed="false">Snow</button></div>
           <button type="button" class="tool" id="snd" aria-pressed="false">Sound off</button>
           <button type="button" class="tool" id="live" aria-pressed="false">Live: match Täby right now</button>
           <span id="livenote" class="livenote" role="status"></span>
@@ -1267,7 +1267,7 @@ if (window.matchMedia) { var mq = matchMedia('(prefers-color-scheme: dark)'); (m
 
 /* ---------- seasons and weather ---------- */
 var SEASONS = { summer: { decl: 18, noon: 13 }, autumn: { decl: -9, noon: 13 }, winter: { decl: -21, noon: 12 } };
-var WEATHERS = { clear: { dim: 1, fog: 1, tint: null }, rain: { dim: 0.72, fog: 0.5, tint: [0.95, 1, 1.06, 0.85] }, fog: { dim: 0.95, fog: 0.1, tint: [1, 1, 1.02, 0.9] }, snow: { dim: 0.92, fog: 0.3, tint: [1, 1.01, 1.04, 0.9] } };
+var WEATHERS = { clear: { dim: 1, fog: 1, tint: null }, cloudy: { dim: 0.82, fog: 0.8, tint: [0.98, 1, 1.04, 0.82] }, rain: { dim: 0.72, fog: 0.5, tint: [0.95, 1, 1.06, 0.85] }, fog: { dim: 0.95, fog: 0.1, tint: [1, 1, 1.02, 0.9] }, snow: { dim: 0.92, fog: 0.3, tint: [1, 1.01, 1.04, 0.9] } };
 var weatherNow = 'clear';
 var precip = (function () {
   var N = (window.matchMedia && matchMedia('(pointer: coarse)').matches) ? 2500 : 6000, B = 90, Hh = 55, base = new Float32Array(N * 3);
@@ -1382,16 +1382,17 @@ var live = (function () {
     try { var p = {}; new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Stockholm', hour12: false, hour: '2-digit', minute: '2-digit', month: 'numeric' }).formatToParts(new Date()).forEach(function (x) { p[x.type] = x.value; }); return { h: (+p.hour % 24) + (+p.minute) / 60, m: +p.month }; }
     catch (e) { var d = new Date(); return { h: d.getHours() + d.getMinutes() / 60, m: d.getMonth() + 1 }; }
   }
-  function kind(code) { /* WMO weather codes */
+  function kind(code, cover) { /* WMO weather codes, with cloud cover in percent */
     if (code === 45 || code === 48) return ['fog', 'fog'];
     if ((code >= 71 && code <= 77) || code === 85 || code === 86) return ['snow', 'snow'];
     if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95) return ['rain', code >= 95 ? 'thunder' : 'rain'];
-    return ['clear', code >= 3 ? 'overcast' : (code >= 1 ? 'some cloud' : 'clear sky')];
+    if (code >= 3 || (code === 2 && cover >= 60)) return ['cloudy', code >= 3 ? 'overcast' : 'mostly cloudy'];
+    return ['clear', code >= 1 ? 'some cloud' : 'clear sky'];
   }
   function note(t) { $('livenote').textContent = t; }
   function apply() {
     var now = stockholm(), sn = last && last.snow_depth > 0.02, season = sn || now.m === 12 || now.m <= 2 ? 'winter' : (now.m >= 9 && now.m <= 11 ? 'autumn' : 'summer');
-    var w = last ? kind(last.weather_code) : null, wname = w ? w[0] : weatherNow; if (wname === 'snow' && season !== 'winter') wname = 'rain';
+    var w = last ? kind(last.weather_code, last.cloud_cover || 0) : null, wname = w ? w[0] : weatherNow; if (wname === 'snow' && season !== 'winter') wname = 'rain';
     internal = true; playing = false; $('play').setAttribute('aria-pressed', 'false');
     if (season !== seasonNow) setSeason(season); if (wname !== weatherNow) setWeather(wname, true); setTime(now.h); internal = false;
     if (last) note('Täby now: ' + Math.round(last.temperature_2m) + ' °C, ' + w[1] + (sn ? ', snow on the ground' : '') + '. Weather from Open-Meteo, updated every 10 minutes.');

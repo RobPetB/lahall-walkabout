@@ -220,7 +220,7 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
     <div class="panel tripbar" id="tripbar" hidden>
       <span id="tripinfo" role="status"></span>
       <div class="trow"><button type="button" class="tool mini" id="tpause" aria-pressed="false">Pause</button><button type="button" class="tool mini" id="tview">Close up</button><button type="button" class="tool mini" id="tstop">Stop</button></div>
-      <small>Drag to look around · scroll to zoom</small>
+      <small>Drag to look around · scroll or pinch to zoom</small>
     </div>
     <div class="panel readout" id="readout">59.4240°N 18.0741°E</div>
     <div class="credit panel">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, via Overture Maps. Elevation from Mapzen terrain tiles. Building heights are estimated; traffic, people and some street furniture are simulated.</div>
@@ -1659,6 +1659,7 @@ var journey = (function () {
     bike: function (c) { return c === 'cycleway' ? 5 : (c === 'path' || c === 'footway' || c === 'track' ? 3 : 4.5); },
     drive: function (c) { return (traffic.CAR[c] || 5) * 0.85; }
   };
+  var UNNAMED = { footway: 'Footpath', path: 'Path', cycleway: 'Cycle path', steps: 'Steps', service: 'Service road', track: 'Track', bridleway: 'Bridle path', pedestrian: 'Pedestrian street', motorway: 'E18' };
   var NETS = { walk: traffic.nets.ped, bike: traffic.nets.bike, drive: traffic.nets.car }, graphs = {};
   function graph(mode) {
     if (graphs[mode]) return graphs[mode];
@@ -1711,7 +1712,8 @@ var journey = (function () {
     r.cum.forEach(function (c) { if (c > Math.min(s0, s1) + 0.05 && c < Math.max(s0, s1) - 0.05) cuts.push(c); });
     for (var i = 1; i < n; i++) cuts.push(s0 + (s1 - s0) * i / n);
     cuts.push(s1); cuts.sort(function (a, b) { return s1 >= s0 ? a - b : b - a; });
-    cuts.forEach(function (s) { traffic.at(k, s, o); out.push({ x: o.x, z: o.z, y: hAt(o.x, o.z) + o.l }); });
+    var nm = roads[k].n >= 0 ? W.names[roads[k].n] : (UNNAMED[r.c] || 'Unnamed road');
+    cuts.forEach(function (s) { traffic.at(k, s, o); out.push({ x: o.x, z: o.z, y: hAt(o.x, o.z) + o.l, n: nm }); });
   }
   function leg(mode, pts, time, label) {
     var cum = [0]; for (var i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
@@ -1753,7 +1755,7 @@ var journey = (function () {
     var w1 = single(A, best.S1, 'walk'), w2 = single(best.S2, B, 'walk');
     if (!w1 || !w2 || (direct && direct.time <= w1.time + best.ride + w2.time)) return direct ? { legs: [direct], note: 'Walking all the way is quicker than taking the train for this trip.' } : null;
     var pts = [], n = Math.max(2, Math.ceil(Math.abs(best.S2.s - best.S1.s) / 8));
-    for (var i = 0; i <= n; i++) { var q = train.at(best.S1.s + (best.S2.s - best.S1.s) * i / n, {}); pts.push({ x: q.x, z: q.z, y: hAt(q.x, q.z) + railLift(q.x, q.z) }); }
+    for (var i = 0; i <= n; i++) { var q = train.at(best.S1.s + (best.S2.s - best.S1.s) * i / n, {}); pts.push({ x: q.x, z: q.z, y: hAt(q.x, q.z) + railLift(q.x, q.z), n: 'Roslagsbanan' }); }
     var t = leg('train', pts, best.ride, null); t.s0 = best.S1.s; t.s1 = best.S2.s; t.from = best.S1.name; t.to = best.S2.name;
     w1.to = best.S1.name; w2.from = best.S2.name;
     return { legs: [w1, t, w2] };
@@ -1821,7 +1823,17 @@ var journey = (function () {
   var DOING = { walk: 'Walking', bike: 'Cycling', drive: 'Driving', train: 'On the train' };
   function bar() {
     var l = cur.legs[li], left = l.len - d; for (var i = li + 1; i < cur.legs.length; i++) left += cur.legs[i].len;
-    $('tripinfo').textContent = (paused ? 'Paused · ' : '') + DOING[l.mode] + (l.to ? ' to ' + l.to : '') + ' · ' + far(Math.max(0, left)) + ' to go';
+    var w = where(), on = w && w.name && l.mode !== 'train' ? ' on ' + w.name : '';
+    $('tripinfo').textContent = (paused ? 'Paused · ' : '') + DOING[l.mode] + (on || (l.to ? ' to ' + l.to : '')) + ' · ' + far(Math.max(0, left)) + ' to go';
+  }
+  /* which road the traveller is on, and the next one coming up */
+  function where() {
+    if (!cur || !running) return null;
+    var l = cur.legs[li], c = l.cum, i = 1; while (i < c.length - 1 && c[i] < d) i++;
+    var name = l.pts[i].n || l.pts[i - 1].n || null, next = null, nd = 0;
+    for (var j = i + 1; j < l.pts.length; j++) { var n = l.pts[j].n; if (n && name && n !== name) { var k = j; while (k < l.pts.length - 1 && l.pts[k + 1].n === n) k++; if (c[k] - c[j] >= 15 || k === l.pts.length - 1) { next = n; nd = c[j] - d; break; } j = k; } }
+    if (!next && li < cur.legs.length - 1) { var nl = cur.legs[li + 1]; next = nl.mode === 'train' ? 'the train at ' + nl.from : 'on foot from ' + (nl.from || 'the stop'); nd = l.len - d; }
+    posAt(l, d, q2); return { x: q2.x, z: q2.z, name: name, next: next, dist: Math.max(0, nd) };
   }
   function setView(v) { view = v; lookYaw = lookPitch = 0; $('tview').textContent = v === 'above' ? 'Close up' : 'From above'; }
   function step(dt) {
@@ -1902,7 +1914,7 @@ var journey = (function () {
     G.pos.forEach(function (p, k) { if (!p) return; var c = comp[G.base[k]]; km[c] += R[k].len; if (!ex[c] || R[k].len > ex[c][3]) ex[c] = [R[k].c, Math.round(R[k].p[0].x), Math.round(R[k].p[0].y), R[k].len]; });
     return km.map(function (m, i) { return [Math.round(m), ex[i].slice(0, 3)]; }).sort(function (a, b) { return b[0] - a[0]; }).slice(0, 12);
   }
-  return { toLeg: function (i, dd) { if (cur && cur.legs[i]) { li = i; d = dd || 0; head = null; } }, look: look, zoomBy: zoomBy, setView: setView, components: components, step: step, go: go, start: start, stop: stop, plan: plan, isRunning: function () { return running; }, mini: function () { return mini; }, setMode: function (m) { modeNow = m; }, state: function () { return { li: li, d: d, legs: cur ? cur.legs.map(function (l) { return [l.mode, Math.round(l.len), Math.round(l.time)]; }) : null }; } };
+  return { where: where, far: far, toLeg: function (i, dd) { if (cur && cur.legs[i]) { li = i; d = dd || 0; head = null; } }, look: look, zoomBy: zoomBy, setView: setView, components: components, step: step, go: go, start: start, stop: stop, plan: plan, isRunning: function () { return running; }, mini: function () { return mini; }, setMode: function (m) { modeNow = m; }, state: function () { return { li: li, d: d, legs: cur ? cur.legs.map(function (l) { return [l.mode, Math.round(l.len), Math.round(l.time)]; }) : null }; } };
 })();
 
 window.addEventListener('keydown', function (e) {
@@ -1921,7 +1933,7 @@ function look(dx, dy, k) { if (me.mode === 'route') { journey.look(dx * k, dy * 
 canvas.addEventListener('pointerdown', function (e) {
   canvas.focus();
   var touch = e.pointerType === 'touch', r = canvas.getBoundingClientRect();
-  var role = touch && (e.clientX - r.left) < r.width * 0.45 && !hasRole('move') ? 'move' : 'look';
+  var role = me.mode !== 'route' && touch && (e.clientX - r.left) < r.width * 0.45 && !hasRole('move') ? 'move' : 'look';
   ptrs[e.pointerId] = { role: role, x: e.clientX, y: e.clientY, ox: e.clientX, oy: e.clientY };
   try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
   if (role === 'move') { takeOver(); stick.hidden = false; stick.style.left = (e.clientX - r.left) + 'px'; stick.style.top = (e.clientY - r.top) + 'px'; stick.firstChild.style.transform = ''; }
@@ -1932,13 +1944,18 @@ function hasRole(r) { for (var k in ptrs) if (ptrs[k].role === r) return true; r
 canvas.addEventListener('pointermove', function (e) {
   if (document.pointerLockElement === canvas) { takeOver(); look(e.movementX, e.movementY, 0.0022); return; }
   var p = ptrs[e.pointerId]; if (!p) return;
+  if (me.mode === 'route') { /* two fingers pinch to zoom; one finger turns the camera */
+    var ids = Object.keys(ptrs);
+    if (ids.length >= 2) { p.x = e.clientX; p.y = e.clientY; var a = ptrs[ids[0]], b = ptrs[ids[1]], dist = Math.hypot(a.x - b.x, a.y - b.y); if (pinch > 0 && dist > 0) journey.zoomBy(pinch / dist); pinch = dist; return; }
+  }
   if (p.role === 'look') { var dx = e.clientX - p.x, dy = e.clientY - p.y; if (dx || dy) takeOver(); look(dx, dy, e.pointerType === 'touch' ? 0.005 : 0.004); p.x = e.clientX; p.y = e.clientY; }
   else {
     var jx = (e.clientX - p.ox) / 44, jy = (e.clientY - p.oy) / 44, l = Math.hypot(jx, jy); if (l > 1) { jx /= l; jy /= l; }
     joy.x = jx; joy.y = jy; stick.firstChild.style.transform = 'translate(' + jx * 30 + 'px,' + jy * 30 + 'px)';
   }
 });
-function endPtr(e) { var p = ptrs[e.pointerId]; if (!p) return; if (p.role === 'move') { joy.x = joy.y = 0; stick.hidden = true; } delete ptrs[e.pointerId]; }
+var pinch = 0;
+function endPtr(e) { pinch = 0; var p = ptrs[e.pointerId]; if (!p) return; if (p.role === 'move') { joy.x = joy.y = 0; stick.hidden = true; } delete ptrs[e.pointerId]; }
 canvas.addEventListener('pointerup', endPtr); canvas.addEventListener('pointercancel', endPtr);
 canvas.addEventListener('wheel', function (e) { if (me.mode === 'tour') return; e.preventDefault(); if (me.mode === 'route') { journey.zoomBy(e.deltaY > 0 ? 1.12 : 0.89); return; } if (me.mode === 'fly') me.y = Math.max(hAt(me.x, me.z) + 2.2, Math.min(900, me.y + e.deltaY * 0.08)); }, { passive: false });
 [['up', 1], ['down', -1]].forEach(function (a) {
@@ -2024,10 +2041,11 @@ var DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], hudT = 0, streetEl = $(
 function hud() {
   var cp = Math.cos(me.pitch), gx = me.x, gz = me.z;
   if (me.mode !== 'walk' && me.pitch < -0.05) { var reach = Math.min(600, (me.y - hAt(me.x, me.z)) / Math.tan(-me.pitch)); gx = me.x - Math.sin(me.yaw) * reach; gz = me.z - Math.cos(me.yaw) * reach; }
-  var st = nearestStreet(gx, gz, me.mode === 'walk' ? 28 : 60), pl = nearestPlace(gx, gz);
+  var tw = me.mode === 'route' ? journey.where() : null; if (tw) { gx = tw.x; gz = tw.z; }
+  var st = tw && tw.name ? tw.name : nearestStreet(gx, gz, me.mode === 'walk' ? 28 : 60), pl = nearestPlace(gx, gz);
   var title = st || (pl.d < 260 ? pl.name : 'Lahäll');
   if (title !== lastStreet) { streetEl.textContent = title; lastStreet = title; }
-  var sub = 'Täby · ' + (pl.d < 160 ? pl.name : Math.round(pl.d / 10) * 10 + ' m to ' + pl.name);
+  var sub = tw && tw.next ? 'Then ' + tw.next + ' · ' + journey.far(tw.dist) : 'Täby · ' + (pl.d < 160 ? pl.name : Math.round(pl.d / 10) * 10 + ' m to ' + pl.name);
   if (distEl.textContent !== sub) distEl.textContent = sub;
   var lat = M.lat0 - me.z / M.mz, lon = M.lon0 + me.x / M.mx, brg = ((-me.yaw * 180 / Math.PI) % 360 + 360) % 360;
   readEl.innerHTML = '<b>' + lat.toFixed(4) + '°N ' + lon.toFixed(4) + '°E</b> <span>·</span> ' + DIRS[Math.round(brg / 45) % 8] + ' ' + ('00' + Math.round(brg) % 360).slice(-3) + '° <span>·</span> ' +

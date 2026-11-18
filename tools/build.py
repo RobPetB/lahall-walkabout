@@ -161,8 +161,44 @@ def hip(q, maxrise, maxslope, maxR=99):
             bands.append([round(ds[i]*10), ring(o.exterior), round(ds[i+1]*10), [ring(x.exterior) for x in inner]])
     for o in lv[2]: bands.append([round(ds[2]*10), ring(o.exterior), round(ds[2]*10), []])
     return {'s':round(slope*100), 'b':bands}
+# ---------- laser scan (optional): real heights above ground on a 1 m grid, see laser_grid.py
+import numpy as np
+from shapely import contains_xy
+LAS=None
+if os.path.exists(D+'laser.npz'):
+    from scipy import ndimage as _ndi
+    _z=np.load(D+'laser.npz'); _lm=int(_z['meta'][2]); _gc=_z['gcnt']
+    _g=np.where(_gc>0,_z['gsum']/np.maximum(_gc,1),np.nan).astype(np.float32)
+    _g=_g[tuple(_ndi.distance_transform_edt(np.isnan(_g),return_distances=False,return_indices=True))]   # holes take the nearest ground
+    _zm=_z['zmax'].astype(np.float32)
+    LAS={'nd':np.where(_zm>-900,_zm-_g,0).clip(0,60).astype(np.float32),'has':_zm>-900}
+    print('laser grid',LAS['nd'].shape,'covered',round(float(LAS['has'].mean()),3),file=sys.stderr)
+def las_cells(q):
+    nd=LAS['nd']; x0,z0,x1,z1=q.bounds
+    i0=max(0,int(math.floor(x0+XW+_lm))); i1=min(nd.shape[1],int(math.ceil(x1+XW+_lm))); j0=max(0,int(math.floor(z0+ZW+_lm))); j1=min(nd.shape[0],int(math.ceil(z1+ZW+_lm)))
+    if i1<=i0 or j1<=j0: return np.zeros(0),np.zeros(0),np.zeros(0)
+    X,Z=np.meshgrid(np.arange(i0,i1)+0.5-XW-_lm,np.arange(j0,j1)+0.5-ZW-_lm)
+    m=contains_xy(q,X,Z)&LAS['has'][j0:j1,i0:i1]
+    return nd[j0:j1,i0:i1][m],X[m],Z[m]
+def laser_roof(q,axes):
+    """Eave height, roof rise, and whether the ridge runs along the short side, from the scan. None when the scan says nothing useful."""
+    inner=q.buffer(-1.0)
+    if inner.is_empty or inner.area<8: inner=q.buffer(-0.4)
+    if inner.is_empty: inner=q
+    v,X,Z=las_cells(inner)
+    if len(v)<6: return None
+    eave=float(np.percentile(v,15)); ridge=float(np.percentile(v,92)); med=float(np.median(v))
+    if ridge<2.0 or ridge>60: return None
+    swap=False
+    if axes and ridge-eave>=0.9 and len(v)>=20:
+        cx,cz,ux,uz=axes; pu=(X-cx)*ux+(Z-cz)*uz; pv=-(X-cx)*uz+(Z-cz)*ux
+        def corr(a,b_):
+            sa,sb=a.std(),b_.std(); return 0.0 if sa<1e-6 or sb<1e-6 else float(((a-a.mean())*(b_-b_.mean())).mean()/(sa*sb))
+        along=corr(v,-np.abs(pv)); across=corr(v,-np.abs(pu))     # a ridge along the long side falls away sideways
+        swap=across>along+0.15 and across>0.3
+    return eave,ridge-eave,swap,med
 bl=L('building')
-B=[];bgeoms=[]
+B=[];bgeoms=[];_nlas=0
 OUT={'carport','garage','garages','shed','roof','shelter','parking'}
 HOUSE={'house','detached','semidetached_house','residential','terrace',None}
 for g,p in bl:
@@ -185,24 +221,40 @@ for g,p in bl:
             t=3; H=(nf*3.4 if nf else 4.5+(h%4)*1.0)
         if nf and t!=2: H=max(H,nf*3.0+0.4)
         if hh: H=float(hh)
-        if t in (0,2) or (t==3 and c=='church'):
-            r=q.minimum_rotated_rectangle
-            if r.geom_type=='Polygon' and r.area>0 and a/r.area>0.8:
-                cs=list(r.exterior.coords)
-                e1=(cs[1][0]-cs[0][0],cs[1][1]-cs[0][1]); e2=(cs[2][0]-cs[1][0],cs[2][1]-cs[1][1])
-                l1=math.hypot(*e1); l2=math.hypot(*e2)
-                if l1<l2: e1,e2,l1,l2=e2,e1,l2,l1
-                roof=[round(r.centroid.x*10),round(r.centroid.y*10),round(l1*5),round(l2*5),round(math.atan2(e1[1],e1[0])*1000)]
+        r=q.minimum_rotated_rectangle; rect=None
+        if r.geom_type=='Polygon' and r.area>0:
+            cs=list(r.exterior.coords)
+            e1=(cs[1][0]-cs[0][0],cs[1][1]-cs[0][1]); e2=(cs[2][0]-cs[1][0],cs[2][1]-cs[1][1])
+            l1=math.hypot(*e1); l2=math.hypot(*e2)
+            if l1<l2: e1,e2,l1,l2=e2,e1,l2,l1
+            if l1>0 and l2>0: rect=(e1,e2,l1,l2,a/r.area>0.8)
+        las=laser_roof(q,(r.centroid.x,r.centroid.y,rect[0][0]/rect[2],rect[0][1]/rect[2]) if rect else None) if LAS else None
+        rise=None
+        if las:
+            # the scan decides: wall height to the eaves, how much roof sits on top, and which way the ridge runs
+            _nlas+=1; rise=las[1] if las[1]>=0.9 else 0.0; H=max(2.2,las[0] if rise else las[3])
+            # a small building under a tree reads as tall as the tree: keep outbuildings and houses within what such buildings are
+            if t==2: H=min(H,4.2); rise=min(rise,2.2)
+            elif t==0: H=min(H,8.5); rise=min(rise,5.5)
+            if rect and las[2]: rect=(rect[1],rect[0],rect[3],rect[2],rect[4])
+        pitched=(rise>0) if las else (t in (0,2) or (t==3 and c=='church'))
+        if pitched and rect and rect[4]:
+            e1,e2,l1,l2,_=rect
+            roof=[round(r.centroid.x*10),round(r.centroid.y*10),round(l1*5),round(l2*5),round(math.atan2(e1[1],e1[0])*1000)]
         d={'p':ring(q.exterior),'h':round(H*10),'t':t,'s':h%97}
+        if las: d['rr']=round(rise*10)
         if roof: d['r']=roof
-        elif t==0 or (t==1 and H<=13):
+        elif las and rise>0:
+            k=hip(q, rise, 3.0, 99)
+            if k: d['k']=k
+        elif not las and (t==0 or (t==1 and H<=13)):
             k=hip(q, 3.3 if t==0 else 2.4, 0.8 if t==0 else 0.4, 99 if t==0 else 8.5)
             if k: d['k']=k
         n=nm(p)
         if n: d['n']=n
         B.append(d); bgeoms.append(q)
 W['buildings']=B
-print('buildings',len(B),'gabled',sum(1 for b in B if 'r' in b),file=sys.stderr)
+print('buildings',len(B),'gabled',sum(1 for b in B if 'r' in b),'hipped',sum(1 for b in B if 'k' in b),'measured by laser',_nlas,file=sys.stderr)
 # ---------- trees
 random.seed(7)
 obst=unary_union(roadgeoms+[b.buffer(2.5) for b in bgeoms]+[w.buffer(1) for w in waterpolys]+[l.buffer(4) for l in raillines])
@@ -225,6 +277,27 @@ AF=(XW*ZW)/(1050*1150)
 scatter(forest,75,0.6,int(9000*min(AF,1.9)))
 scatter([unary_union(parks).difference(fu)],450,0.2,int(1200*min(AF,2.2)))
 scatter([unary_union(resid).difference(fu)],520,0.25,int(5000*min(AF,1.8)))
+if LAS:
+    # real trees: the tops of the canopy in the scan, each with its measured height
+    nd=LAS['nd']; sm=_ndi.gaussian_filter(nd,1.0); mx=_ndi.maximum_filter(sm,size=7); flat7=_ndi.uniform_filter(nd,7)
+    cj,ci=np.nonzero((sm==mx)&(sm>=4.5)&(sm<=40)&LAS['has'])
+    xs=ci+0.5-XW-_lm; zs=cj+0.5-ZW-_lm; hs=nd[cj,ci]
+    ok=(np.abs(xs)<XW-1)&(np.abs(zs)<ZW-1)&(flat7[cj,ci]<0.88*sm[cj,ci])      # a flat top is a roof, not a tree
+    ok&=~contains_xy(obst,xs,zs)
+    xs,zs,hs=xs[ok],zs[ok],hs[ok]; order=np.argsort(-hs); cap=int(30000*min(AF,1.0)) if AF<1 else 30000; S=4.0
+    while True:
+        seen=set(); pick=[]
+        for i in order:
+            key=(int(xs[i]//S),int(zs[i]//S))
+            if key in seen: continue
+            seen.add(key); pick.append(i)
+        if len(pick)<=cap: break
+        S*=1.15
+    inf=contains_xy(fu,xs[pick],zs[pick]); T=[]
+    for n_,i in enumerate(pick):
+        con=random.random()<(0.6 if inf[n_] else 0.25); full=10.7*1.15 if con else 9.2
+        T.extend([round(float(xs[i])*10),round(float(zs[i])*10),0 if con else 1,int(max(35,min(330,hs[i]/full*100)))])
+    print('laser trees',len(pick),'of',len(order),'candidates, spacing',round(S,1),'m, median height',round(float(np.median(hs[pick])),1),file=sys.stderr)
 for g,p in land:
     if g.geom_type=='Point' and BOX.contains(g): T.extend([round(g.x*10),round(g.y*10),1,110])
     if g.geom_type=='LineString':
@@ -295,9 +368,18 @@ print('places',len(W['places']),file=sys.stderr)
 import numpy as np
 from shapely import contains_xy
 H=np.load(D+'dem.npy'); PAD,DX=960,20; nz_,nx_=H.shape
+if LAS:
+    # terrain from the scan's ground points (RH 2000), averaged onto the 20 m lattice
+    _wc=_z['wcnt']; _w=np.where(_wc>0,_z['wsum']/np.maximum(_wc,1),np.nan).astype(np.float32); _hole=np.isnan(_w)
+    _w=_w[tuple(_ndi.distance_transform_edt(_hole,return_distances=False,return_indices=True))]
+    _w=_ndi.uniform_filter(_w,4); _c=int(_z['meta'][4]); st=DX//_c
+    jj=np.minimum(np.arange(nz_)*st,_w.shape[0]-1); ii=np.minimum(np.arange(nx_)*st,_w.shape[1]-1)
+    Hl=_w[np.ix_(jj,ii)]; far=_ndi.distance_transform_edt(_hole)[np.ix_(jj,ii)]*_c
+    print('terrain: laser vs old, median difference',round(float(np.median(Hl-H)),2),'m; nodes without nearby ground',int((far>60).sum()),file=sys.stderr)
+    H=np.where(far>60,H+float(np.median(Hl-H)),Hl).astype(float)
 def blur(a):
     p=np.pad(a,1,mode='edge'); return (p[:-2,:-2]+p[:-2,1:-1]+p[:-2,2:]+p[1:-1,:-2]+2*p[1:-1,1:-1]+p[1:-1,2:]+p[2:,:-2]+p[2:,1:-1]+p[2:,2:])/10
-H=blur(blur(H))
+H=blur(H) if LAS else blur(blur(H))
 gx_,gz_=np.meshgrid(-(XW+PAD)+np.arange(nx_)*DX, -(ZW+PAD)+np.arange(nz_)*DX)
 wl=[]
 BIG=box(-XW-PAD,-ZW-PAD,XW+PAD,ZW+PAD)
@@ -463,7 +545,7 @@ for (st,num),v in A.items():
 out.sort(key=lambda a:(a[0],int(re.match(r'\d+',a[1]).group()) if re.match(r'\d+',a[1]) else 0,a[1]))
 W['addr']=out
 print('addresses',len(out),'osm',n_osm,'streets with numbers',len(set(a[0] for a in out)),'of',len(names),file=sys.stderr)
-W['meta']={'lat0':LAT0,'lon0':LON0,'mx':MX,'mz':MZ,'xw':XW,'zw':ZW}
+W['meta']={'lat0':LAT0,'lon0':LON0,'mx':MX,'mz':MZ,'xw':XW,'zw':ZW,'laser':1 if LAS else 0}
 s=json.dumps(W,separators=(',',':'),ensure_ascii=False)
 open(os.environ.get('LOUT','../world.json'),'w').write(s)
 print({k:len(json.dumps(v)) for k,v in W.items()},len(s),file=sys.stderr)

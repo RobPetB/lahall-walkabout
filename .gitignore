@@ -2,3 +2,5 @@ tools/node_modules/
 test/
 *.log
 __pycache__/
+data2/laser.npz
+*.laz

@@ -23,3 +23,9 @@ Unlike the Claude artifact, this copy can reach the Open-Meteo weather service, 
 
 ## Route planner
 The Route button plans a trip between two addresses, streets or places, on foot, by car, by bike, or by train with walking at each end, and can play the trip back. Routing runs in the browser on the same road graph the traffic uses. Car trips to the Enebyberg/Ekeby corner in the south-west fail by design: those streets only connect to the rest by roads outside the mapped area.
+
+## Laser data (Lantmäteriet)
+Terrain, building heights, roof shapes and trees come from Lantmäteriet's open laser scans (product "Laserdata Nedladdning, skog", CC BY 4.0, scanned 2021).
+- Tile list: STAC API `https://api.lantmateriet.se/stac-hojd/v1`, collection `dsm-skoglig-copc`; the files on `dl1.lantmateriet.se` need a free Geotorget login (HTTP basic auth).
+- `tools/laser_grid.py <dir with .laz> data2/laser.npz` rasterises the point clouds onto the model's grid (needs `laspy`, `lazrs`, `scipy`).
+- `build.py` uses `data2/laser.npz` when it is there; without it, heights, roofs and trees fall back to estimates. The .laz tiles (about 1 GB) and `laser.npz` (69 MB) are not in the repository.

@@ -68,9 +68,10 @@ for g,p in lu:
     if c=='park': parks.append(g.intersection(BOX))
     if c=='residential': resid.append(g.intersection(BOX))
 waterpolys=[]
+poolgeoms=[]
 for g,p in water:
     if g.geom_type in('Polygon','MultiPolygon'):
-        if p.get('class')=='swimming_pool': addpoly('pool',g,0.2,3)
+        if p.get('class')=='swimming_pool': addpoly('pool',g,0.2,3); poolgeoms.extend(polys(g))
         else:
             addpoly('water',g,1.5,10); waterpolys.append(g.intersection(BOX))
 streams=[]
@@ -188,7 +189,8 @@ def laser_roof(q,axes):
     v,X,Z=las_cells(inner)
     if len(v)<6: return None
     eave=float(np.percentile(v,15)); ridge=float(np.percentile(v,92)); med=float(np.median(v))
-    if ridge<2.0 or ridge>60: return None
+    if ridge<2.0: return 'low'          # the scan sees nothing building-sized here
+    if ridge>60: return None
     swap=False
     if axes and ridge-eave>=0.9 and len(v)>=20:
         cx,cz,ux,uz=axes; pu=(X-cx)*ux+(Z-cz)*uz; pv=-(X-cx)*uz+(Z-cz)*ux
@@ -197,8 +199,14 @@ def laser_roof(q,axes):
         along=corr(v,-np.abs(pv)); across=corr(v,-np.abs(pu))     # a ridge along the long side falls away sideways
         swap=across>along+0.15 and across>0.3
     return eave,ridge-eave,swap,med
+from shapely.strtree import STRtree
 bl=L('building')
-B=[];bgeoms=[];_nlas=0
+# hand corrections: things the open map gets wrong and someone who knows the place has pointed out
+OVR=json.load(open(D+'overrides.json')) if os.path.exists(D+'overrides.json') else {}
+for o in OVR.get('add_buildings',[]):
+    bl.append((Polygon([(o['ring'][i],o['ring'][i+1]) for i in range(0,len(o['ring']),2)]),{'id':'override:'+o['note'],'class':o.get('class','shed'),'_h':o.get('h'),'_rise':o.get('rise',0)}))
+_pooltree=STRtree(poolgeoms) if poolgeoms else None
+B=[];bgeoms=[];_nlas=0;_npool=0
 OUT={'carport','garage','garages','shed','roof','shelter','parking'}
 HOUSE={'house','detached','semidetached_house','residential','terrace',None}
 for g,p in bl:
@@ -229,6 +237,10 @@ for g,p in bl:
             if l1<l2: e1,e2,l1,l2=e2,e1,l2,l1
             if l1>0 and l2>0: rect=(e1,e2,l1,l2,a/r.area>0.8)
         las=laser_roof(q,(r.centroid.x,r.centroid.y,rect[0][0]/rect[2],rect[0][1]/rect[2]) if rect else None) if LAS else None
+        if las=='low':
+            # a 'building' that the scan shows flat on the ground and that sits on a mapped pool is the pool, not a house
+            if _pooltree is not None and sum(q.intersection(poolgeoms[int(i)]).area for i in _pooltree.query(q))>=0.35*a: _npool+=1; continue
+            las=None
         rise=None
         if las:
             # the scan decides: wall height to the eaves, how much roof sits on top, and which way the ridge runs
@@ -237,6 +249,7 @@ for g,p in bl:
             if t==2: H=min(H,4.2); rise=min(rise,2.2)
             elif t==0: H=min(H,8.5); rise=min(rise,5.5)
             if rect and las[2]: rect=(rect[1],rect[0],rect[3],rect[2],rect[4])
+        if p.get('_h'): H=float(p['_h']); rise=float(p.get('_rise') or 0); las=las or (H,rise,False,H)   # a stated size beats the scan
         pitched=(rise>0) if las else (t in (0,2) or (t==3 and c=='church'))
         if pitched and rect and rect[4]:
             e1,e2,l1,l2,_=rect
@@ -254,7 +267,7 @@ for g,p in bl:
         if n: d['n']=n
         B.append(d); bgeoms.append(q)
 W['buildings']=B
-print('buildings',len(B),'gabled',sum(1 for b in B if 'r' in b),'hipped',sum(1 for b in B if 'k' in b),'measured by laser',_nlas,file=sys.stderr)
+print('buildings',len(B),'gabled',sum(1 for b in B if 'r' in b),'hipped',sum(1 for b in B if 'k' in b),'measured by laser',_nlas,'dropped as pools',_npool,file=sys.stderr)
 # ---------- trees
 random.seed(7)
 obst=unary_union(roadgeoms+[b.buffer(2.5) for b in bgeoms]+[w.buffer(1) for w in waterpolys]+[l.buffer(4) for l in raillines])

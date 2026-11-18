@@ -213,7 +213,7 @@ for g,p in bl:
     for q in polys(g):
         if not BOX.contains(q.centroid): continue
         q=q.simplify(0.3)
-        if q.geom_type!='Polygon' or q.area<6: continue
+        if q.geom_type!='Polygon' or (q.area<6 and not str(p.get('id','')).startswith('override:')): continue   # specks are noise, unless someone put them there on purpose
         from shapely.geometry.polygon import orient
         q=orient(q)
         a=q.area; c=p.get('class'); st=p.get('subtype'); h=h32(p['id'])

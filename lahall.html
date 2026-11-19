@@ -1417,7 +1417,8 @@ var precip = (function () {
 function setWeather(name, keepSeason, cover) {
   weatherNow = name; var w = WEATHERS[name]; weather.dim = w.dim; weather.fog = w.fog; weather.tint = w.tint;
   precip.set(name); groundMats.forEach(function (m) { m.color.setScalar(name === 'rain' ? 0.8 : 1); });
-  clouds.set(name === 'clear' ? (cover === undefined ? 0.3 : Math.max(0.06, cover)) : (name === 'cloudy' || name === 'rain' ? 1 : 0));
+  /* separate clouds belong to a clear sky; an overcast, rainy, foggy or snowy sky is one even grey sheet */
+  clouds.set(name === 'clear' ? (cover === undefined ? 0.3 : Math.max(0.06, cover)) : 0);
   if (name === 'snow' && seasonNow !== 'winter' && !keepSeason) setSeason('winter'); else applySky(true);
   [].forEach.call($('weathers').children, function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-v') === name ? 'true' : 'false'); });
 }

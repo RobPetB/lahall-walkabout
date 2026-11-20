@@ -222,6 +222,7 @@ for o in OVR.get('add_buildings',[]):
 _pooltree=STRtree(poolgeoms) if poolgeoms else None
 B=[];bgeoms=[];_nlas=0;_npool=0
 OUT={'carport','garage','garages','shed','roof','shelter','parking'}
+_ntower=0
 HOUSE={'house','detached','semidetached_house','residential','terrace',None}
 for g,p in bl:
     for q in polys(g):
@@ -267,6 +268,10 @@ for g,p in bl:
             elif rise and big and rise>4.5: rise=0.0; H=max(2.0,las[4])      # a block with a low wing and a taller part: show the taller part's height
             elif rise and rise/half>1.28: rise=1.28*half
             # a small building under a tree reads as tall as the tree: keep outbuildings and houses within what such buildings are
+            # mapped as a plain 'residential' building under 420 m2, but the walls stand taller than any house: a tower block.
+            # (A tree over a house lifts the ridge, not the eaves, so the wall height is the safe thing to test.)
+            if t==0 and a>=120 and (las[0]>9.5 or (nf and nf>=4 and las[3]>9.5)):
+                t=1; _ntower+=1; print('tower, not house:',p.get('id'),round(a),'m2, floors',nf,'laser walls',round(las[0],1),'top',round(las[4],1),file=sys.stderr)
             if t==2: H=min(H,4.2); rise=min(rise,2.2)
             elif t==0: H=min(H,8.5); rise=min(rise,6.5)
             if rect and las[2]: rect=(rect[1],rect[0],rect[3],rect[2],rect[4])

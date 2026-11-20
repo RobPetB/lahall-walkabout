@@ -321,7 +321,8 @@ for g,p in land:
                 pt=ll.interpolate(d); T.extend([round(pt.x*10),round(pt.y*10),1,100]); d+=9
 W['trees']=T
 print('trees',len(T)//4,file=sys.stderr)
-W['stops']=[v for g,p in infra if p.get('class')=='bus_stop' and g.geom_type=='Point' and BOX.contains(g) for v in (round(g.x*10),round(g.y*10))]
+_bs=[(g,nm(p) or '') for g,p in infra if p.get('class')=='bus_stop' and g.geom_type=='Point' and BOX.contains(g)]
+W['stops']=[v for g,n_ in _bs for v in (round(g.x*10),round(g.y*10))]; W['stopnames']=[n_ for g,n_ in _bs]
 W['lamps']=[v for g,p in infra if p.get('class')=='street_lamp' and BOX.contains(g) for v in (round(g.x*10),round(g.y*10))]
 W['barriers']=[{'k':p.get('class'),'p':flat(l.simplify(0.3).coords)} for g,p in infra if p.get('class') in('hedge','fence','wall') for l in lines(g.intersection(BOX)) if l.length>2]
 FK={'bench':'bench','post_box':'postbox','waste_basket':'bin','bicycle_parking':'bike','traffic_signals':'signal','give_way':'giveway','stop':'stop','charging_station':'charge','crossing':'cross'}

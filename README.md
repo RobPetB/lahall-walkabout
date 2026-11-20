@@ -29,3 +29,9 @@ Terrain, building heights, roof shapes and trees come from Lantmäteriet's open 
 - Tile list: STAC API `https://api.lantmateriet.se/stac-hojd/v1`, collection `dsm-skoglig-copc`; the files on `dl1.lantmateriet.se` need a free Geotorget login (HTTP basic auth).
 - `tools/laser_grid.py <dir with .laz> data2/laser.npz` rasterises the point clouds onto the model's grid (needs `laspy`, `lazrs`, `scipy`).
 - `build.py` uses `data2/laser.npz` when it is there; without it, heights, roofs and trees fall back to estimates. The .laz tiles (about 1 GB) and `laser.npz` (69 MB) are not in the repository.
+
+## Timetables
+The train and the buses run by the real clock, so every viewer sees them in the same place.
+- Train: Roslagsbanan's Näsbypark branch on a fixed 12-minute pattern. The pattern is invented; the track and stops are real.
+- Buses: the 58 mapped stops are real, with their real names. The four lines (A–D) joining them are invented, because real routes are not in the open map: each is the driving route between two far-apart stops, calling at every stop it passes, with a bus about every ten minutes.
+The route planner uses these timetables for departure, wait and arrival times. It plans one ride with a walk at each end; it does not change between lines.

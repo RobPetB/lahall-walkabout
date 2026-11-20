@@ -209,7 +209,7 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
           <input class="tool rin" id="rto" type="text" list="rlist" placeholder="Address, street or place" autocomplete="off" spellcheck="false">
           <datalist id="rlist"></datalist>
           <span id="l-rmode">Travel by</span>
-          <div class="seg" role="group" aria-labelledby="l-rmode" id="rmodes"><button type="button" data-v="walk" aria-pressed="true">Walk</button><button type="button" data-v="drive" aria-pressed="false">Drive</button><button type="button" data-v="bike" aria-pressed="false">Cycle</button><button type="button" data-v="train" aria-pressed="false">Train</button></div>
+          <div class="seg" role="group" aria-labelledby="l-rmode" id="rmodes"><button type="button" data-v="walk" aria-pressed="true">Walk</button><button type="button" data-v="drive" aria-pressed="false">Drive</button><button type="button" data-v="bike" aria-pressed="false">Cycle</button><button type="button" data-v="train" aria-pressed="false">Train</button><button type="button" data-v="bus" aria-pressed="false">Bus</button></div>
           <button type="button" class="tool" id="rgo">Show route</button>
           <span id="rnote" class="livenote" role="status"></span>
           <button type="button" class="tool" id="rplay" aria-pressed="false" hidden>Start trip</button>
@@ -946,6 +946,38 @@ var stars = (function () {
   return { obj: pts3, look: function () { var o = weather.tint ? 0 : Math.max(0, Math.min(1, (-3 - sunEl) / 6)); mat.opacity = o * 0.9; pts3.visible = o > 0.02; } };
 })();
 
+/* ---------- timetables: where a vehicle on a fixed line is at any clock time ---------- */
+function clockNow() { return Date.now() / 1000; }
+/* A line runs out and back over its stops for ever. `stops` are distances along the line; the result repeats every `cycle` seconds. */
+function Timetable(stops, o) {
+  var segs = [], t = 0, n = stops.length, natural = 0, i;
+  function runTime(a, b) { return Math.abs(b - a) / o.v + 8; }
+  for (i = 1; i < n; i++) natural += 2 * runTime(stops[i - 1], stops[i]);
+  natural += 2 * (n - 2) * o.dwell;
+  var cycle = Math.ceil((natural + 2 * o.turn) / o.round) * o.round, endDwell = (cycle - natural) / 2;
+  function leg(order, dir) {
+    for (var j = 1; j < n; j++) {
+      var a = stops[order[j - 1]], b = stops[order[j]], d = runTime(a, b);
+      segs.push({ t0: t, t1: t + d, s0: a, s1: b, dir: dir, run: true }); t += d;
+      var w = j < n - 1 ? o.dwell : endDwell; segs.push({ t0: t, t1: t + w, s0: b, s1: b, dir: j < n - 1 ? dir : -dir, run: false }); t += w;
+    }
+  }
+  var fwd = stops.map(function (_, k) { return k; }); leg(fwd, 1); leg(fwd.slice().reverse(), -1);
+  function mod(a, m) { return ((a % m) + m) % m; }
+  function find(match) { for (var k = 0; k < segs.length; k++) if (match(segs[k])) return segs[k]; return null; }
+  return { cycle: cycle,
+    pos: function (time) {
+      var tt = mod(time, cycle), g = segs[segs.length - 1]; for (var k = 0; k < segs.length; k++) if (tt < segs[k].t1) { g = segs[k]; break; }
+      if (!g.run) return { s: g.s0, dir: g.dir, v: 0 };
+      var u = (tt - g.t0) / (g.t1 - g.t0), e = u * u * (3 - 2 * u); return { s: g.s0 + (g.s1 - g.s0) * e, dir: g.dir, v: Math.abs(g.s1 - g.s0) / (g.t1 - g.t0) * 6 * u * (1 - u) };
+    },
+    /* next departure from the stop at `from` towards `to`, at or after `time`, for vehicles `headway` seconds apart; and when it gets there */
+    trip: function (from, to, time, headway) {
+      var dir = to > from ? 1 : -1, dep = find(function (g) { return g.run && g.dir === dir && Math.abs(g.s0 - from) < 0.5; }), arr = find(function (g) { return g.run && g.dir === dir && Math.abs(g.s1 - to) < 0.5; });
+      if (!dep || !arr) return null;
+      var wait = mod(dep.t0 - time, headway || cycle); return { dep: time + wait, arr: time + wait + (arr.t1 - dep.t0), wait: wait, ride: arr.t1 - dep.t0 };
+    } };
+}
 /* ---------- the train ---------- */
 var train = (function () {
   var P = pts(W.train.p), cum = [0];
@@ -966,21 +998,13 @@ var train = (function () {
     g.add(b1); g.add(b2); g.add(b3); scene.add(g); cars.push(g);
   }
   var stops = W.train.stops.slice().concat([45, len - 5]).sort(function (a, b) { return a - b; });
-  var s = stops.length > 2 ? stops[1] : len / 2, dir = 1, v = 0, wait = 6, tmp = {};
+  /* Roslagsbanan's Näsbypark branch on a fixed 12-minute pattern; the western end of the line is where it leaves the map */
+  var tt = Timetable(stops, { v: 11, dwell: 20, turn: 40, round: 120 });
+  var s = stops.length > 2 ? stops[1] : len / 2, dir = 1, v = 0, wait = 0, tmp = {};
   var ext = 0;
-  return { band: band, nextStop: function () { var best = null; (W.train.stops || []).forEach(function (st, i) { var dd = (st - s) * dir; if (dd > 1 && (!best || dd < best.dist)) best = { name: (W.train.names || [])[i] || 'stop', dist: dd }; }); return best; }, stations: W.train.stops.slice(), at: at, drive: function (sv, d, vv) { s = Math.max(0, Math.min(len, sv)); dir = d; v = vv; wait = 0; ext = 0.4; }, pos: function () { return at(s, tmp); }, cab: function () { var q = at(s + dir * 27.5, tmp); return { x: q.x, z: q.z, a: q.a + (dir > 0 ? 0 : Math.PI), v: v, wait: wait }; }, step: function (dt) {
+  return { band: band, nextStop: function () { var best = null; (W.train.stops || []).forEach(function (st, i) { var dd = (st - s) * dir; if (dd > 1 && (!best || dd < best.dist)) best = { name: (W.train.names || [])[i] || 'stop', dist: dd }; }); return best; }, stations: W.train.stops.slice(), timetable: tt, at: at, drive: function (sv, d, vv) { s = Math.max(0, Math.min(len, sv)); dir = d; v = vv; wait = 0; ext = 0.4; }, pos: function () { return at(s, tmp); }, cab: function () { var q = at(s + dir * 27.5, tmp); return { x: q.x, z: q.z, a: q.a + (dir > 0 ? 0 : Math.PI), v: v, wait: wait }; }, step: function (dt) {
     if (ext > 0) { ext -= dt; }   /* a trip is driving the train */
-    else if (wait > 0) { wait -= dt; }
-    else {
-      var target = null;
-      for (var i = 0; i < stops.length; i++) { var d = (stops[i] - s) * dir; if (d > 0.5 && (target === null || d < (target - s) * dir)) target = stops[i]; }
-      if (target === null) { dir = -dir; wait = 12; }
-      else {
-        var dist = (target - s) * dir, vmax = Math.min(14, Math.sqrt(2 * 0.7 * dist) + 0.4);
-        v = Math.min(vmax, v + 0.8 * dt); s += v * dt * dir;
-        if (dist < 0.6) { s = target; v = 0; wait = 9; }
-      }
-    }
+    else if (dt > 0) { var now = tt.pos(clockNow()); s = now.s; dir = now.dir; v = now.v; }
     for (var c = 0; c < 3; c++) { var q = at(s + (c - 1) * 19.8, tmp); cars[c].position.set(q.x, hAt(q.x, q.z) + 0.2 + railLift(q.x, q.z), q.z); cars[c].rotation.y = q.a; }
   } };
 })();
@@ -1037,7 +1061,7 @@ var traffic = (function () {
       for (var j = 1; j < r.p.length; j++) {
         var ax = r.p[j - 1].x, az = r.p[j - 1].y, ex = r.p[j].x - ax, ez = r.p[j].y - az, l2 = ex * ex + ez * ez; if (!l2) continue;
         var t = Math.max(0, Math.min(1, ((sx - ax) * ex + (sz - az) * ez) / l2)), dd = Math.hypot(ax + ex * t - sx, az + ez * t - sz);
-        if (dd < bestD) { bestD = dd; hit = { k: k, s: r.cum[j - 1] + Math.sqrt(l2) * t, x: sx, z: sz, side: (ex * (sz - az) - ez * (sx - ax)) > 0 ? 1 : -1 }; }
+        if (dd < bestD) { bestD = dd; hit = { i: si / 2, k: k, s: r.cum[j - 1] + Math.sqrt(l2) * t, x: sx, z: sz, side: (ex * (sz - az) - ez * (sx - ax)) > 0 ? 1 : -1 }; }
       }
     });
     if (hit) { stops.push(hit); busRoad[hit.k] = 1; }
@@ -1108,12 +1132,12 @@ var traffic = (function () {
     if (bus) { busM.setMatrixAt(i, d.matrix); busLM.setMatrixAt(i, d.matrix); return; }
     bodyM.setMatrixAt(i, d.matrix); trimM.setMatrixAt(i, d.matrix); if (lit) lightM.setMatrixAt(i, d.matrix);
   }
-  var NB = stops.length ? Math.round((coarse ? 5 : 9) * AREA) : 0, NY = Math.round((coarse ? 30 : 70) * AREA);
+  var NB = 0, BUSCAP = 24, NY = Math.round((coarse ? 30 : 70) * AREA);
   var busG = merge([part(2.5, 1.5, 12, 0, 1.15, 0, '#c8202a'), part(2.52, 1.0, 11.6, 0, 2.35, 0, '#1d2933'), part(2.5, 0.42, 12, 0, 3.05, 0, '#c8202a'), part(2.3, 0.14, 11.4, 0, 3.32, 0, '#d9dcde'), part(2.5, 0.5, 0.5, 0, 2.45, 5.76, '#1b1b1b'),
     part(2.58, 0.9, 1.0, 0, 0.47, 3.6, '#17181a'), part(2.58, 0.9, 1.0, 0, 0.47, -3.4, '#17181a'), part(1.5, 0.3, 0.05, 0, 2.95, 6.02, '#f2b632')]);
   var busLG = merge([part(0.45, 0.18, 0.06, 0.9, 0.75, 6.02, '#fff6d8'), part(0.45, 0.18, 0.06, -0.9, 0.75, 6.02, '#fff6d8'), part(0.4, 0.2, 0.06, 0.95, 0.9, -6.02, '#d8262a'), part(0.4, 0.2, 0.06, -0.95, 0.9, -6.02, '#d8262a')]);
-  var busM = new THREE.InstancedMesh(busG, new THREE.MeshLambertMaterial({ vertexColors: true }), Math.max(1, NB)), busLM = new THREE.InstancedMesh(busLG, lightMat, Math.max(1, NB));
-  busM.count = busLM.count = NB;
+  var busM = new THREE.InstancedMesh(busG, new THREE.MeshLambertMaterial({ vertexColors: true }), BUSCAP), busLM = new THREE.InstancedMesh(busLG, lightMat, BUSCAP);
+  busM.count = busLM.count = 0;
   /* stop signs */
   (function () {
     var g = merge([part(0.08, 2.6, 0.08, 0, 1.3, 0, '#5a5f66'), part(0.55, 0.55, 0.06, 0, 2.65, 0, '#1b4f93'), part(0.3, 0.2, 0.07, 0, 2.68, 0, '#ffffff')]);
@@ -1204,7 +1228,10 @@ var traffic = (function () {
     step(0);
   }
   step(0);
-  return { crowd: crowd, CAR: CAR, nets: { car: carNet, ped: pedNet, bike: bikeNet }, geo: { body: bodyG, trim: trimG, light: lightG, bike: bikeG, torso: torsoG, head: headG, leg: legG }, lightMat: lightMat, part: part, merge: merge, carJ: carNet.J, step: step, cars: cars, people: people, bikes: bikes, stops: stops, parked: parked.length, lot: parked[Math.floor(parked.length / 2)], R: R, at: at, links: [carNet, pedNet].map(function (n) { return n.J.reduce(function (s, l) { return s + l.length; }, 0); }) };
+  /* buses run on fixed lines and a timetable; whoever knows the lines places them here */
+  function busAt(i, x, z, ang, lift) { if (i >= BUSCAP) return; curLift = lift; place(i, x, z, ang, 1, 1, 1, true, true); }
+  function busN(n) { busM.count = busLM.count = Math.min(BUSCAP, n); busM.instanceMatrix.needsUpdate = busLM.instanceMatrix.needsUpdate = true; }
+  return { busAt: busAt, busN: busN, crowd: crowd, CAR: CAR, nets: { car: carNet, ped: pedNet, bike: bikeNet }, geo: { bus: busG, busLights: busLG, body: bodyG, trim: trimG, light: lightG, bike: bikeG, torso: torsoG, head: headG, leg: legG }, lightMat: lightMat, part: part, merge: merge, carJ: carNet.J, step: step, cars: cars, people: people, bikes: bikes, stops: stops, parked: parked.length, lot: parked[Math.floor(parked.length / 2)], R: R, at: at, links: [carNet, pedNet].map(function (n) { return n.J.reduce(function (s, l) { return s + l.length; }, 0); }) };
 })();
 
 /* ---------- street furniture ---------- */
@@ -1826,7 +1853,7 @@ $('vshare').addEventListener('click', function () {
 function openLink() {
   var h = (location.hash || '').replace(/^#/, ''); if (!h) return false;
   var q = {}; h.split('&').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) { try { q[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1).replace(/\+/g, ' ')); } catch (e) {} } });
-  if (q.to) { journey.open(q.from || '', q.to, { walk: 1, drive: 1, bike: 1, train: 1 }[q.by] ? q.by : 'walk'); return true; }
+  if (q.to) { journey.open(q.from || '', q.to, { walk: 1, drive: 1, bike: 1, train: 1, bus: 1 }[q.by] ? q.by : 'walk'); return true; }
   if (q.q) { window.__lahall_search.pick(q.q); return true; }
   if (q.at) {
     var a = q.at.split(',').map(Number); if (a.length < 2 || !isFinite(a[0]) || !isFinite(a[1])) return false;
@@ -1926,29 +1953,97 @@ var journey = (function () {
     return leg(mode, pts, best + (a.d + b.d) / FOOTSPEED, null);
   }
   var STATIONS = train.stations.map(function (s, i) { var q = train.at(s, {}); return { s: s, x: q.x, z: q.z, name: (W.train.names || [])[i] || T('the stop', 'hållplatsen') }; });
-  function plan(A, B, mode) {
-    if (mode !== 'train') { var l = single(A, B, mode); return l ? { legs: [l] } : null; }
-    var direct = single(A, B, 'walk'), best = null;
-    STATIONS.forEach(function (S1) {
-      var d1 = Math.hypot(S1.x - A.x, S1.z - A.z);
-      STATIONS.forEach(function (S2) {
-        if (S1 === S2) return; var d2 = Math.hypot(S2.x - B.x, S2.z - B.z), between = STATIONS.filter(function (q) { return (q.s - S1.s) * (q.s - S2.s) < 0; }).length;
-        var ride = Math.abs(S2.s - S1.s) / 11 + 25 * between + 90, guess = d1 * 1.3 / FOOTSPEED + ride + d2 * 1.3 / FOOTSPEED;
-        if (!best || guess < best.guess) best = { S1: S1, S2: S2, ride: ride, guess: guess };
-      });
+  function project(l, x, z) { /* nearest point on a leg's line: distance to it and distance along it */
+    var bd = 1e9, bs = 0;
+    for (var j = 1; j < l.pts.length; j++) {
+      var a = l.pts[j - 1], c = l.pts[j], ex = c.x - a.x, ez = c.z - a.z, l2 = ex * ex + ez * ez; if (!l2) continue;
+      var t = Math.max(0, Math.min(1, ((x - a.x) * ex + (z - a.z) * ez) / l2)), dd = Math.hypot(a.x + ex * t - x, a.z + ez * t - z);
+      if (dd < bd) { bd = dd; bs = l.cum[j - 1] + Math.sqrt(l2) * t; }
+    }
+    return { d: bd, s: bs };
+  }
+  function slice(l, s0, s1) { /* the part of a line between two distances along it, in travel order */
+    var lo = Math.min(s0, s1), hi = Math.max(s0, s1), out = [], q0 = {};
+    posAt(l, lo, q0); var name = null; for (var j = 0; j < l.pts.length; j++) if (l.cum[j] >= lo) { name = l.pts[j].n; break; }
+    out.push({ x: q0.x, z: q0.z, y: q0.y, n: name });
+    for (j = 0; j < l.pts.length; j++) if (l.cum[j] > lo + 0.05 && l.cum[j] < hi - 0.05) out.push(l.pts[j]);
+    posAt(l, hi, q0); out.push({ x: q0.x, z: q0.z, y: q0.y, n: out[out.length - 1].n });
+    return s1 >= s0 ? out : out.reverse();
+  }
+  /* Bus lines. The stops are the real, mapped ones; the lines joining them and their timetable are made up, since
+     the real routes are not in the open map: each line is the driving route between two far-apart stops, calling at every stop it passes. */
+  var BUSLINES = (function () {
+    var logical = [];
+    traffic.stops.forEach(function (st) {
+      var name = (W.stopnames || [])[st.i] || '', m = logical.filter(function (q) { var d = Math.hypot(q.x - st.x, q.z - st.z); return name ? (q.name === name && d < 140) : d < 40; })[0];
+      if (m) { m.x = (m.x * m.n + st.x) / (m.n + 1); m.z = (m.z * m.n + st.z) / (m.n + 1); m.n++; } else logical.push({ x: st.x, z: st.z, name: name || T('the stop', 'hållplatsen'), n: 1 });
     });
-    if (!best) return direct ? { legs: [direct], note: T('There is no train stop to use here, so this is the walk.', 'Det finns ingen användbar hållplats här, så det här är gångvägen.') } : null;
-    var w1 = single(A, best.S1, 'walk'), w2 = single(best.S2, B, 'walk');
-    if (!w1 || !w2 || (direct && direct.time <= w1.time + best.ride + w2.time)) return direct ? { legs: [direct], note: T('Walking all the way is quicker than taking the train for this trip.', 'Det går fortare att gå hela vägen än att ta tåget på den här sträckan.') } : null;
-    var pts = [], n = Math.max(2, Math.ceil(Math.abs(best.S2.s - best.S1.s) / 8));
-    for (var i = 0; i <= n; i++) { var q = train.at(best.S1.s + (best.S2.s - best.S1.s) * i / n, {}); pts.push({ x: q.x, z: q.z, y: hAt(q.x, q.z) + railLift(q.x, q.z), n: 'Roslagsbanan' }); }
-    var t = leg('train', pts, best.ride, null); t.s0 = best.S1.s; t.s1 = best.S2.s; t.from = best.S1.name; t.to = best.S2.name;
-    w1.to = best.S1.name; w2.from = best.S2.name;
-    return { legs: [w1, t, w2] };
+    var lines = [], open = logical.slice(), tries = 0;
+    while (open.length >= 2 && lines.length < 4 && tries++ < 14) {
+      var A = null, B = null, far2 = 0;
+      for (var i = 0; i < open.length; i++) for (var j = i + 1; j < open.length; j++) { var dd = Math.hypot(open[i].x - open[j].x, open[i].z - open[j].z); if (dd > far2) { far2 = dd; A = open[i]; B = open[j]; } }
+      var r = single(A, B, 'drive');
+      if (!r || r.len < 600) { open.splice(open.indexOf(A), 1); continue; }
+      var on = []; logical.forEach(function (q) { var pr = project(r, q.x, q.z); if (pr.d < 34) on.push({ stop: q, s: pr.s }); });
+      on.sort(function (a, b) { return a.s - b.s; }); on = on.filter(function (o, k) { return k === 0 || o.s - on[k - 1].s > 80; });
+      if (on.length < 2) { open.splice(open.indexOf(A), 1); continue; }
+      var line = { name: 'ABCD'.charAt(lines.length), pts: r.pts, cum: r.cum, len: r.len, stops: on, phase: lines.length * 97 };
+      line.tt = Timetable(on.map(function (o) { return o.s; }), { v: 8.5, dwell: 12, turn: 60, round: 60 });
+      line.n = Math.max(1, Math.round(line.tt.cycle / 600)); line.headway = line.tt.cycle / line.n; lines.push(line);
+      open = open.filter(function (q) { return !on.some(function (o) { return o.stop === q; }); });
+    }
+    return lines;
+  })();
+  var bq = {};
+  function buses() { /* put every scheduled bus where the clock says it is */
+    var now = clockNow(), n = 0;
+    BUSLINES.forEach(function (line) {
+      for (var k = 0; k < line.n; k++) {
+        var p = line.tt.pos(now + line.phase + k * line.headway); posAt(line, p.s, bq);
+        var h = bq.h + (p.dir < 0 ? Math.PI : 0), fx = Math.sin(h), fz = Math.cos(h), x = bq.x - fz * 1.7, z = bq.z + fx * 1.7;
+        traffic.busAt(n++, x, z, h, bq.y - hAt(x, z));
+      }
+    });
+    traffic.busN(n);
+  }
+  /* one ride on a timetabled line, with a walk at each end; the walk alone if that is quicker */
+  function transit(A, B, kind, options, quicker, none) {
+    var direct = single(A, B, 'walk'), now = clockNow(), best = null;
+    options.forEach(function (o) {
+      var t1 = Math.hypot(o.from.x - A.x, o.from.z - A.z) * 1.3 / FOOTSPEED, t2 = Math.hypot(o.to.x - B.x, o.to.z - B.z) * 1.3 / FOOTSPEED, tr = o.trip(now + t1); if (!tr) return;
+      var tot = t1 + tr.wait + tr.ride + t2; if (!best || tot < best.tot) best = { o: o, tot: tot };
+    });
+    if (!best) return direct ? { legs: [direct], note: none } : null;
+    var o = best.o, w1 = single(A, o.from, 'walk'), w2 = single(o.to, B, 'walk'); if (!w1 || !w2) return direct ? { legs: [direct], note: none } : null;
+    var tr = o.trip(now + w1.time), L = leg(kind, o.pts(), tr.wait + tr.ride, null);
+    if (direct && direct.time <= w1.time + L.time + w2.time) return { legs: [direct], note: quicker };
+    L.wait = tr.wait; L.ride = tr.ride; L.dep = tr.dep; L.arr = tr.arr; L.from = o.from.name; L.to = o.to.name; L.line = o.line; if (o.dress) o.dress(L);
+    w1.to = o.from.name; w2.from = o.to.name; return { legs: [w1, L, w2] };
+  }
+  function plan(A, B, mode) {
+    if (mode === 'train') {
+      var opts = [];
+      STATIONS.forEach(function (S1) { STATIONS.forEach(function (S2) {
+        if (S1 === S2) return;
+        opts.push({ from: S1, to: S2, trip: function (t) { return train.timetable.trip(S1.s, S2.s, t); },
+          pts: function () { var pts = [], n = Math.max(2, Math.ceil(Math.abs(S2.s - S1.s) / 8)); for (var i = 0; i <= n; i++) { var q = train.at(S1.s + (S2.s - S1.s) * i / n, {}); pts.push({ x: q.x, z: q.z, y: hAt(q.x, q.z) + railLift(q.x, q.z), n: 'Roslagsbanan' }); } return pts; },
+          dress: function (L) { L.s0 = S1.s; L.s1 = S2.s; } });
+      }); });
+      return transit(A, B, 'train', opts, T('Walking all the way is quicker than taking the train for this trip.', 'Det går fortare att gå hela vägen än att ta tåget på den här sträckan.'), T('There is no train stop to use here, so this is the walk.', 'Det finns ingen användbar hållplats här, så det här är gångvägen.'));
+    }
+    if (mode === 'bus') {
+      var bo = [];
+      BUSLINES.forEach(function (line) { line.stops.forEach(function (a) { line.stops.forEach(function (b) {
+        if (a === b) return;
+        bo.push({ from: a.stop, to: b.stop, line: line.name, trip: function (t) { var r = line.tt.trip(a.s, b.s, t + line.phase, line.headway); if (r) { r.dep -= line.phase; r.arr -= line.phase; } return r; }, pts: function () { return slice(line, a.s, b.s); } });
+      }); }); });
+      return transit(A, B, 'bus', bo, T('Walking all the way is quicker than taking the bus for this trip.', 'Det går fortare att gå hela vägen än att ta bussen på den här sträckan.'), T('No bus line serves this trip, so this is the walk.', 'Ingen busslinje passar den här resan, så det här är gångvägen.'));
+    }
+    var l = single(A, B, mode); return l ? { legs: [l] } : null;
   }
 
   /* --- drawing the route --- */
-  var COL = { walk: '#1b6fe0', bike: '#12a05c', drive: '#d0531c', train: '#8a3fd1' }, mesh = null, startPin = null, cur = null, mini = [];
+  var COL = { walk: '#1b6fe0', bike: '#12a05c', drive: '#d0531c', train: '#8a3fd1', bus: '#c8202a' }, mesh = null, startPin = null, cur = null, mini = [];
   function clear() { if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh = null; } if (startPin) startPin.visible = false; mini = []; cur = null; }
   function draw(route, A) {
     var P = [], C = [], c = new THREE.Color();
@@ -1971,6 +2066,7 @@ var journey = (function () {
   function far(d) { return d < 950 ? Math.round(d / 10) * 10 + ' m' : (d / 1000).toFixed(1).replace('.', T('.', ',')) + ' km'; }
   function VERB(m) { return T({ walk: 'on foot', bike: 'by bike', drive: 'by car' }[m], { walk: 'till fots', bike: 'med cykel', drive: 'med bil' }[m]); }
   /* clock time in Täby, some seconds from now */
+  function clockAt(epoch) { return clock(epoch - clockNow()); }
   function clock(plus) {
     var t = new Date(Date.now() + (plus || 0) * 1000);
     try { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', hour: '2-digit', minute: '2-digit' }).format(t); }
@@ -1980,7 +2076,7 @@ var journey = (function () {
   function describe(route) {
     var total = 0, dist = 0; route.legs.forEach(function (l) { total += l.time; dist += l.len; });
     var parts = route.legs.map(function (l) {
-      if (l.mode === 'train') return T('train ', 'tåg ') + l.from + T(' to ', ' till ') + l.to + ', ' + dur(l.time) + T(' with the wait', ' med väntan');
+      if (l.mode === 'train' || l.mode === 'bus') return (l.mode === 'train' ? T('train ', 'tåg ') : T('bus ', 'buss ') + l.line + ' ') + l.from + ' ' + clockAt(l.dep) + T(' to ', ' till ') + l.to + ' ' + clockAt(l.arr) + (l.wait > 90 ? T(', after a wait of ', ', efter ') + dur(l.wait) + T('', ' väntan') : '');
       return (route.legs.length > 1 ? T('walk ', 'gå ') + far(l.len) + (l.to ? T(' to ', ' till ') + l.to : '') + ', ' + dur(l.time) : far(l.len) + T(', about ', ', ungefär ') + dur(l.time) + ' ' + VERB(l.mode));
     });
     return (route.legs.length > 1 ? T('About ', 'Ungefär ') + dur(total) + T(' in all: ', ' totalt: ') + parts.join('; ') + '.' : parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + '.') + (route.note ? ' ' + route.note : '');
@@ -1999,11 +2095,13 @@ var journey = (function () {
     return true;
   }
   function stop(arrived) {
-    running = false; ride.car.visible = ride.bike.visible = false; walker.visible = false; $('tripbar').hidden = true;
+    running = false; ride.car.visible = ride.bike.visible = tripBus.visible = false; walker.visible = false; $('tripbar').hidden = true;
     if (me.mode === 'route') { me.mode = 'fly'; setMode('walk'); }
     $('rplay').textContent = T('Start trip', 'Starta resan'); $('rplay').setAttribute('aria-pressed', 'false');
     if (arrived) $('rnote').textContent = T('You have arrived. ', 'Du är framme. ') + describe(cur) + T(' Having left when the trip started, you would be there at ', ' Om du hade gett dig av när resan startade hade du varit framme ') + eta + '.';
   }
+  var tripBus = new THREE.Group();
+  (function () { var a = new THREE.Mesh(traffic.geo.bus, new THREE.MeshLambertMaterial({ vertexColors: true })), b = new THREE.Mesh(traffic.geo.busLights, traffic.lightMat); a.castShadow = true; tripBus.add(a); tripBus.add(b); tripBus.rotation.order = 'YXZ'; tripBus.visible = false; scene.add(tripBus); })();
   /* the figure you follow on the walking legs */
   var walker = new THREE.Group(), wlegs;
   (function () {
@@ -2013,11 +2111,11 @@ var journey = (function () {
     walker.visible = false; scene.add(walker);
   })();
   var waitT = null, eta = '', q = {}, q2 = {}, view = 'above', paused = false, lookYaw = 0, lookPitch = 0, zoom = 1, barT = 0;
-  function DOING(m) { return T({ walk: 'Walking', bike: 'Cycling', drive: 'Driving', train: 'On the train' }[m], { walk: 'Går', bike: 'Cyklar', drive: 'Kör', train: 'På tåget' }[m]); }
+  function DOING(m) { return T({ walk: 'Walking', bike: 'Cycling', drive: 'Driving', train: 'On the train', bus: 'On the bus' }[m], { walk: 'Går', bike: 'Cyklar', drive: 'Kör', train: 'På tåget', bus: 'På bussen' }[m]); }
   function bar() {
     var l = cur.legs[li], left = l.len - d; for (var i = li + 1; i < cur.legs.length; i++) left += cur.legs[i].len;
-    if (waitT > 0 && l.mode === 'train') { $('tripinfo').textContent = (paused ? T('Paused · ', 'Pausad · ') : '') + T('Waiting for the train at ', 'Väntar på tåget vid ') + l.from; return; }
-    var w = where(), on = w && w.name && l.mode !== 'train' ? T(' on ', ' på ') + w.name : '';
+    if (waitT > 0 && (l.mode === 'train' || l.mode === 'bus')) { $('tripinfo').textContent = (paused ? T('Paused · ', 'Pausad · ') : '') + (l.mode === 'train' ? T('Waiting for the train at ', 'Väntar på tåget vid ') : T('Waiting for bus ', 'Väntar på buss ') + l.line + T(' at ', ' vid ')) + l.from; return; }
+    var w = where(), on = w && w.name && l.mode !== 'train' ? (l.mode === 'bus' ? ' ' + l.line : '') + T(' on ', ' på ') + w.name : '';
     var tl = l.time * (1 - d / (l.len || 1)); for (i = li + 1; i < cur.legs.length; i++) tl += cur.legs[i].time;
     $('tripinfo').textContent = (paused ? T('Paused · ', 'Pausad · ') : '') + DOING(l.mode) + (on || (l.to ? T(' to ', ' till ') + l.to : '')) + ' · ' + far(Math.max(0, left)) + ' · ' + (tl < 60 ? Math.max(0, Math.round(tl / 5) * 5) + ' s' : (tl < 600 ? Math.floor(tl / 60) + ' min ' + ('0' + Math.floor(tl % 60 / 10) * 10).slice(-2) + ' s' : dur(tl))) + T(' left · arrive ', ' kvar · framme ') + eta;
   }
@@ -2027,37 +2125,37 @@ var journey = (function () {
     var l = cur.legs[li], c = l.cum, i = 1; while (i < c.length - 1 && c[i] < d) i++;
     var name = l.pts[i].n || l.pts[i - 1].n || null, next = null, nd = 0;
     for (var j = i + 1; j < l.pts.length; j++) { var n = l.pts[j].n; if (n && name && n !== name) { var k = j; while (k < l.pts.length - 1 && l.pts[k + 1].n === n) k++; if (c[k] - c[j] >= 15 || k === l.pts.length - 1) { next = n; nd = c[j] - d; break; } j = k; } }
-    if (!next && li < cur.legs.length - 1) { var nl = cur.legs[li + 1]; next = nl.mode === 'train' ? T('the train at ', 'tåget vid ') + nl.from : T('on foot from ', 'till fots från ') + (nl.from || T('the stop', 'hållplatsen')); nd = l.len - d; }
+    if (!next && li < cur.legs.length - 1) { var nl = cur.legs[li + 1]; next = nl.mode === 'train' ? T('the train at ', 'tåget vid ') + nl.from : nl.mode === 'bus' ? T('bus ', 'buss ') + nl.line + T(' at ', ' vid ') + nl.from : T('on foot from ', 'till fots från ') + (nl.from || T('the stop', 'hållplatsen')); nd = l.len - d; }
     posAt(l, d, q2); return { x: q2.x, z: q2.z, name: name, next: next, dist: Math.max(0, nd) };
   }
   function setView(v) { view = v; lookYaw = lookPitch = 0; $('tview').textContent = v === 'above' ? T('Close up', 'Närbild') : T('From above', 'Ovanifrån'); }
   function step(dt) {
     if (!running || !cur) { stop(false); return; }
-    var l = cur.legs[li], v = l.len / Math.max(1, l.time - (l.mode === 'train' ? 90 : 0));
-    if (l.mode === 'train' && d === 0 && waitT === null) waitT = 4;          /* you reach the platform; the train is on its way in */
+    var l = cur.legs[li], v = l.len / Math.max(1, l.ride || l.time);
+    if ((l.mode === 'train' || l.mode === 'bus') && d === 0 && waitT === null) waitT = 4;          /* you reach the platform; the train is on its way in */
     if (waitT !== null && waitT > 0) { if (!paused) waitT -= dt; } else if (!paused) d += v * mult * dt;
     if (d >= l.len) { if (li < cur.legs.length - 1) { li++; d = 0; waitT = null; l = cur.legs[li]; } else { posAt(l, l.len, q); me.x = q.x; me.z = q.z; stop(true); return; } }
     posAt(l, d, q); var k = Math.min(1, dt * 5);
     if (head === null) head = q.h; var dh = q.h - head; while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI; head += dh * Math.min(1, dt * (view === 'above' ? 2.5 : 6));
-    var hx = Math.sin(q.h), hz = Math.cos(q.h), car = l.mode === 'drive';
+    var hx = Math.sin(q.h), hz = Math.cos(q.h), bus = l.mode === 'bus', car = l.mode === 'drive' || bus;
     /* whatever is travelling: the walker, the car, the bike, or the real train */
-    ride.car.visible = car; ride.bike.visible = l.mode === 'bike'; walker.visible = l.mode === 'walk' && view === 'above';
+    ride.car.visible = car && !bus; tripBus.visible = bus; ride.bike.visible = l.mode === 'bike'; walker.visible = l.mode === 'walk' && view === 'above';
     if (l.mode === 'train') { var dir = l.s1 > l.s0 ? 1 : -1, w = waitT > 1 ? (waitT - 1) / 3 : 0; train.drive(l.s0 + dir * d - dir * 27.5 - dir * 170 * w * w, dir, paused || waitT > 0 ? 0 : v * mult); }
     else if (l.mode === 'walk') { walker.position.set(q.x, q.y, q.z); walker.rotation.y = q.h; var wp = d * 2.3; wlegs[0].rotation.x = Math.sin(wp) * 0.55; wlegs[1].rotation.x = -Math.sin(wp) * 0.55; }
     else {
-      var veh = car ? ride.car : ride.bike; posAt(l, d + 2, q2); var up = q2.y; posAt(l, d - 2, q2);
+      var veh = bus ? tripBus : (car ? ride.car : ride.bike); posAt(l, d + 2, q2); var up = q2.y; posAt(l, d - 2, q2);
       veh.position.set(q.x, q.y + 0.09, q.z); veh.rotation.set(-Math.atan((up - q2.y) / 4), q.h, 0);
       if (!car) { var ph = d * 1.9; ride.legs[0].rotation.x = -0.6 + Math.sin(ph) * 0.45; ride.legs[1].rotation.x = -0.6 - Math.sin(ph) * 0.45; }
     }
     /* the camera: close up (eye level, behind the vehicle, or the train cab) or from above; dragging turns it either way */
     var a = head + lookYaw, sx = Math.sin(a), sz = Math.cos(a), cx, cy, cz, pitch;
     if (view === 'above') {
-      var el = Math.max(0.2, Math.min(1.35, 0.62 - lookPitch)), D = (l.mode === 'train' ? 95 : (car ? 60 : 38)) * zoom;
+      var el = Math.max(0.2, Math.min(1.35, 0.62 - lookPitch)), D = (l.mode === 'train' ? 95 : (bus ? 75 : (car ? 60 : 38))) * zoom;
       cx = q.x - sx * D * Math.cos(el); cz = q.z - sz * D * Math.cos(el); cy = Math.max(q.y + D * Math.sin(el), hAt(cx, cz) + 3); pitch = -Math.atan2(cy - q.y - 1.5, Math.hypot(cx - q.x, cz - q.z));
     } else if (l.mode === 'walk' || l.mode === 'train') {
       cx = q.x; cz = q.z; cy = q.y + (l.mode === 'walk' ? EYE : 3.0); pitch = Math.max(-1.3, Math.min(1.3, (l.mode === 'walk' ? -0.06 : -0.04) + lookPitch)); k = 1;
     } else {
-      var back = (car ? 8.5 : 5) * zoom; cx = q.x - sx * back; cz = q.z - sz * back; cy = Math.max(q.y + (car ? 3.3 : 2.4) * zoom, hAt(cx, cz) + 1.2); pitch = Math.max(-1.3, Math.min(0.6, -0.17 + lookPitch));
+      var back = (bus ? 17 : (car ? 8.5 : 5)) * zoom; cx = q.x - sx * back; cz = q.z - sz * back; cy = Math.max(q.y + (bus ? 5.5 : (car ? 3.3 : 2.4)) * zoom, hAt(cx, cz) + 1.2); pitch = Math.max(-1.3, Math.min(0.6, -0.17 + lookPitch));
     }
     me.x += (cx - me.x) * k; me.z += (cz - me.z) * k; me.y += (cy - me.y) * k;
     var wy = a + Math.PI, dy = wy - me.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI; me.yaw += dy * Math.min(1, dt * 8); me.pitch += (pitch - me.pitch) * Math.min(1, dt * 8);
@@ -2113,7 +2211,7 @@ var journey = (function () {
     return km.map(function (m, i) { return [Math.round(m), ex[i].slice(0, 3)]; }).sort(function (a, b) { return b[0] - a[0]; }).slice(0, 12);
   }
   function relabel() { $('rplay').textContent = running ? T('Stop trip', 'Avbryt resan') : T('Start trip', 'Starta resan'); $('tpause').textContent = paused ? T('Resume', 'Fortsätt') : T('Pause', 'Pausa'); $('tview').textContent = view === 'above' ? T('Close up', 'Närbild') : T('From above', 'Ovanifrån'); if (running) bar(); }
-  return { relabel: relabel, open: function (from, to, by) { $('rfrom').value = from || ''; $('rto').value = to || ''; var bt = document.querySelector('#rmodes [data-v="' + by + '"]'); if (bt) bt.click(); else go(); $('route').hidden = false; $('rt').setAttribute('aria-expanded', 'true'); },
+  return { buses: buses, lines: function () { return BUSLINES.map(function (l) { return [l.name, Math.round(l.len), l.n, Math.round(l.headway), l.stops.map(function (o) { return o.stop.name; })]; }); }, relabel: relabel, open: function (from, to, by) { $('rfrom').value = from || ''; $('rto').value = to || ''; var bt = document.querySelector('#rmodes [data-v="' + by + '"]'); if (bt) bt.click(); else go(); $('route').hidden = false; $('rt').setAttribute('aria-expanded', 'true'); },
     where: where, far: far, toLeg: function (i, dd) { if (cur && cur.legs[i]) { li = i; d = dd || 0; head = null; waitT = dd ? 0 : null; } }, look: look, zoomBy: zoomBy, setView: setView, components: components, step: step, go: go, start: start, stop: stop, plan: plan, isRunning: function () { return running; }, mini: function () { return mini; }, setMode: function (m) { modeNow = m; }, state: function () { return { li: li, d: d, legs: cur ? cur.legs.map(function (l) { return [l.mode, Math.round(l.len), Math.round(l.time)]; }) : null }; } };
 })();
 
@@ -2275,7 +2373,7 @@ function frame(now) {
   camera.position.set(me.x, me.y, me.z); camera.rotation.set(me.pitch, me.yaw, 0);
   skyMesh.position.set(me.x, 0, me.z);
   if (playing && !reduced) setTime(tod + dt * 0.25);
-  updateShadow(); precip.step(reduced ? 0 : dt); water.step(reduced ? 0 : dt); clouds.step(reduced ? 0 : dt); stars.obj.position.set(me.x, 0, me.z); sound.step(dt);
+  journey.buses(); updateShadow(); precip.step(reduced ? 0 : dt); water.step(reduced ? 0 : dt); clouds.step(reduced ? 0 : dt); stars.obj.position.set(me.x, 0, me.z); sound.step(dt);
   var k = 0.034 * (camera.fov / 62);
   for (var i = 0; i < labels.length; i++) {
     var s = labels[i], d = s.position.distanceTo(camera.position);
@@ -2294,7 +2392,7 @@ var STATIC = [
   ['#details [data-v=auto]', 'Auto', 'Auto'], ['#details [data-v=high]', 'High', 'Hög'], ['#details [data-v=medium]', 'Medium', 'Medel'], ['#details [data-v=low]', 'Low', 'Låg'],
   ['#live', 'Live: match Täby right now', 'Live: som i Täby just nu'], ['#vshare', 'Copy link to this view', 'Kopiera länk till den här vyn'], ['#sceneclose', 'Close', 'Stäng'], ['#rclose', 'Close', 'Stäng'],
   ['#rt', 'Route', 'Rutt'], ['label[for=rfrom]', 'From', 'Från'], ['label[for=rto]', 'To', 'Till'], ['#rgo', 'Show route', 'Visa rutt'], ['#rshare', 'Copy link to this route', 'Kopiera länk till den här rutten'],
-  ['#rmodes [data-v=walk]', 'Walk', 'Gå'], ['#rmodes [data-v=drive]', 'Drive', 'Bil'], ['#rmodes [data-v=bike]', 'Cycle', 'Cykel'], ['#rmodes [data-v=train]', 'Train', 'Tåg'],
+  ['#rmodes [data-v=walk]', 'Walk', 'Gå'], ['#rmodes [data-v=drive]', 'Drive', 'Bil'], ['#rmodes [data-v=bike]', 'Cycle', 'Cykel'], ['#rmodes [data-v=train]', 'Train', 'Tåg'], ['#rmodes [data-v=bus]', 'Bus', 'Buss'],
   ['#rspeed [data-v="1"]', 'Real speed', 'Verklig fart'], ['#tstop', 'Stop', 'Avbryt'], ['#tripbar small', 'Drag to look around · scroll or pinch to zoom', 'Dra för att titta runt · scrolla eller nyp för att zooma'],
   ['#hellotitle', 'Lahäll, Täby in 3D', 'Lahäll, Täby i 3D'], ['#hellogo', 'Start exploring', 'Börja utforska'], ['#lang', 'På svenska', 'In English']
 ];

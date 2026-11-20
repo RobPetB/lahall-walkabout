@@ -184,6 +184,9 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
           <button type="button" class="tool" id="snd" aria-pressed="false">Sound off</button>
           <button type="button" class="tool" id="live" aria-pressed="false">Live: match Täby right now</button>
           <span id="livenote" class="livenote" role="status"></span>
+          <span id="l-detail">Detail</span>
+          <div class="seg" role="group" aria-labelledby="l-detail" id="details"><button type="button" data-v="auto" aria-pressed="true">Auto</button><button type="button" data-v="high" aria-pressed="false">High</button><button type="button" data-v="medium" aria-pressed="false">Medium</button><button type="button" data-v="low" aria-pressed="false">Low</button></div>
+          <span id="detailnote" class="livenote"></span>
           <button type="button" class="tool" id="sceneclose">Close</button>
         </div>
       </div>
@@ -271,6 +274,8 @@ var camera = new THREE.PerspectiveCamera(62, 1, 0.4, 9000);
 camera.rotation.order = 'YXZ';
 
 /* ---------- small helpers ---------- */
+var LANG = 'en';
+function T(en, sv) { return LANG === 'sv' && sv !== undefined ? sv : en; }
 function rnd(seed) { var x = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function col(hex) { return new THREE.Color(hex); }
 function Buf() { this.p = []; this.c = []; this.u = []; }
@@ -455,7 +460,7 @@ var outerLand = null;
 })();
 /* a sharp patch of ground that follows you: the same painting, at several times the resolution, faded in at the edges */
 var detail = (function () {
-  var coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches, TS = coarse ? 1024 : 2048, NC = coarse ? 10 : 14, dx = DEM.dx, size = NC * dx;
+  var coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches, TS = coarse ? 1024 : 2048, NC = Math.round((coarse ? 200 : 280) / DEM.dx), dx = DEM.dx, size = NC * dx;
   var cv = document.createElement('canvas'); cv.width = cv.height = TS; var c = cv.getContext('2d'), tex = new THREE.CanvasTexture(cv); tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   var P = new Float32Array((NC + 1) * (NC + 1) * 3), U = [], I = [];
   for (var j = 0; j <= NC; j++) for (var i = 0; i <= NC; i++) U.push(i / NC, 1 - j / NC);
@@ -478,7 +483,7 @@ var detail = (function () {
   return { repaint: function () { if (ci !== null) paint(); }, update: function (fx, fz, alt) {
     if (alt > 260) { mesh.visible = false; return; }
     var ni = Math.max(0, Math.min(DEM.nx - 1 - NC, Math.round((fx - DEM.x0) / dx - NC / 2))), nj = Math.max(0, Math.min(DEM.nz - 1 - NC, Math.round((fz - DEM.z0) / dx - NC / 2)));
-    if (ci !== null && Math.abs(ni - ci) < 3 && Math.abs(nj - cj) < 3) { mesh.visible = true; return; }
+    if (ci !== null && Math.abs(ni - ci) < 60 / dx && Math.abs(nj - cj) < 60 / dx) { mesh.visible = true; return; }
     ci = ni; cj = nj;
     for (var j = 0, k = 0; j <= NC; j++) for (var i = 0; i <= NC; i++) { var x = DEM.x0 + (ci + i) * dx, z = DEM.z0 + (cj + j) * dx; P[k++] = x; P[k++] = hAt(x, z) + 0.02; P[k++] = z; }
     g.attributes.position.needsUpdate = true; g.computeVertexNormals(); paint(); mesh.visible = true;
@@ -769,6 +774,7 @@ var treeSets = [];
 (function () {
   var T = W.trees, n = T.length / 4, kinds = [[], []];
   for (var i = 0; i < n; i++) kinds[T[i * 4 + 2]].push(i);
+  kinds.forEach(function (l) { l.sort(function (a, b) { return rnd(a * 1.618) - rnd(b * 1.618); }); });   /* shuffled: drawing only the first part thins the trees evenly */
   var mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   var trunkMat = new THREE.MeshLambertMaterial({ color: '#5d4a3a' });
   var fine = !(window.matchMedia && matchMedia('(pointer: coarse)').matches);
@@ -804,7 +810,7 @@ var treeSets = [];
       crownMesh.setMatrixAt(j, d.matrix); trunkMesh.setMatrixAt(j, d.matrix);
       var g = GREENS[k]; cc.set(g[Math.floor(rnd(ti + 5) * (k === 1 && rnd(ti + 2) > 0.12 ? g.length - 1 : g.length))]); crownMesh.setColorAt(j, cc); base.push(cc.clone());
     });
-    treeSets.push({ k: k, mesh: crownMesh, list: list, base: base, full: crownMesh.geometry });
+    treeSets.push({ k: k, mesh: crownMesh, trunk: trunkMesh, list: list, base: base, full: crownMesh.geometry });
     crownMesh.frustumCulled = trunkMesh.frustumCulled = false;
     scene.add(crownMesh); scene.add(trunkMesh);
   });
@@ -1140,7 +1146,7 @@ var traffic = (function () {
       if (a.bus) place(a.bi, o.x - fz * (off + (r.c === 'motorway' ? 0 : 0.2)), o.z + fx * (off + (r.c === 'motorway' ? 0 : 0.2)), a.ang, 1, 1, 1, true, true);
       else place(i, o.x - fz * off, o.z + fx * off, a.ang, a.sx, a.sy, a.sl, true);
     }
-    for (i = 0; i < NP; i++) {
+    for (i = 0; i < Math.min(NP, liveP); i++) {
       a = people[i]; if (dt) advance(a, a.v * dt, pedNet, false); r = R[a.r]; at(a.r, a.s, o);
       fx = o.dx * a.dir; fz = o.dz * a.dir; off = (PAVE[r.c] ? r.w / 2 + 1.05 : (r.w >= 4.5 ? r.w / 2 + 0.5 : r.w * 0.22)) * a.side;
       var x = o.x - fz * off, z = o.z + fx * off, y = o.l ? hAt(o.x, o.z) + o.l + 0.19 : hAt(x, z); turn(a, Math.atan2(fx, fz), dt ? dt * 6 : 1); a.ph += a.v * dt * 4.2;
@@ -1150,7 +1156,7 @@ var traffic = (function () {
       d.position.set(x + rx, y + 0.87 * h, z + rz); d.rotation.set(sw, a.ang, 0); d.updateMatrix(); legM.setMatrixAt(i * 2, d.matrix);
       d.position.set(x - rx, y + 0.87 * h, z - rz); d.rotation.set(-sw, a.ang, 0); d.updateMatrix(); legM.setMatrixAt(i * 2 + 1, d.matrix);
     }
-    for (i = 0; i < NY; i++) {
+    for (i = 0; i < Math.min(NY, liveY); i++) {
       a = bikes[i]; if (dt) advance(a, a.v * dt, bikeNet, false); r = R[a.r]; at(a.r, a.s, o);
       fx = o.dx * a.dir; fz = o.dz * a.dir; off = r.c === 'cycleway' ? r.w * 0.22 : (r.w >= 5 ? r.w * 0.4 : r.w * 0.22);
       x = o.x - fz * off; z = o.z + fx * off; y = o.l ? hAt(o.x, o.z) + o.l + 0.1 : hAt(x, z); turn(a, Math.atan2(fx, fz), dt ? dt * 6 : 1); a.ph += a.v * dt * 1.9;
@@ -1165,8 +1171,16 @@ var traffic = (function () {
     busM.instanceMatrix.needsUpdate = busLM.instanceMatrix.needsUpdate = bikeM.instanceMatrix.needsUpdate = true;
     bodyM.instanceMatrix.needsUpdate = trimM.instanceMatrix.needsUpdate = lightM.instanceMatrix.needsUpdate = torsoM.instanceMatrix.needsUpdate = headM.instanceMatrix.needsUpdate = legM.instanceMatrix.needsUpdate = true;
   }
+  /* fewer walkers and riders on a slow device: the rest are parked out of sight */
+  var liveP = NP, liveY = NY, zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  function crowd(f) {
+    liveP = Math.round(NP * f); liveY = Math.round(NY * f);
+    for (var i = liveP; i < NP; i++) { torsoM.setMatrixAt(i, zero); headM.setMatrixAt(i, zero); legM.setMatrixAt(i * 2, zero); legM.setMatrixAt(i * 2 + 1, zero); }
+    for (i = liveY; i < NY; i++) { var pi = NP + i; bikeM.setMatrixAt(i, zero); torsoM.setMatrixAt(pi, zero); headM.setMatrixAt(pi, zero); legM.setMatrixAt(pi * 2, zero); legM.setMatrixAt(pi * 2 + 1, zero); }
+    step(0);
+  }
   step(0);
-  return { CAR: CAR, nets: { car: carNet, ped: pedNet, bike: bikeNet }, geo: { body: bodyG, trim: trimG, light: lightG, bike: bikeG, torso: torsoG, head: headG, leg: legG }, lightMat: lightMat, part: part, merge: merge, carJ: carNet.J, step: step, cars: cars, people: people, bikes: bikes, stops: stops, parked: parked.length, lot: parked[Math.floor(parked.length / 2)], R: R, at: at, links: [carNet, pedNet].map(function (n) { return n.J.reduce(function (s, l) { return s + l.length; }, 0); }) };
+  return { crowd: crowd, CAR: CAR, nets: { car: carNet, ped: pedNet, bike: bikeNet }, geo: { body: bodyG, trim: trimG, light: lightG, bike: bikeG, torso: torsoG, head: headG, leg: legG }, lightMat: lightMat, part: part, merge: merge, carJ: carNet.J, step: step, cars: cars, people: people, bikes: bikes, stops: stops, parked: parked.length, lot: parked[Math.floor(parked.length / 2)], R: R, at: at, links: [carNet, pedNet].map(function (n) { return n.J.reduce(function (s, l) { return s + l.length; }, 0); }) };
 })();
 
 /* ---------- street furniture ---------- */
@@ -1366,7 +1380,7 @@ function applySky(force) {
 }
 /* shadows: one shadow map that follows where you are looking, wider the higher you fly */
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-var SHRES = (window.matchMedia && matchMedia('(pointer: coarse)').matches) ? 2048 : 4096;
+var COARSE = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches), SHRES = COARSE ? 2048 : 4096;
 sun.castShadow = true; sun.shadow.mapSize.set(SHRES, SHRES); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.06; scene.add(sun.target);
 scene.traverse(function (o) { if (!o.isMesh || o === skyMesh || o === sunMesh || o === moonMesh || o.userData.sky) return; o.receiveShadow = true; if (!o.userData.ground) o.castShadow = true; });
 var shHalf = 0;
@@ -1378,6 +1392,36 @@ function updateShadow() {
   if (Math.abs(half - shHalf) > shHalf * 0.08) { shHalf = half; var c = sun.shadow.camera; c.left = c.bottom = -half; c.right = c.top = half; c.near = 50; c.far = 2200; c.updateProjectionMatrix(); sun.shadow.normalBias = 0.05 + half / 2500; }
   sunMesh.position.set(me.x + sunDir.x * 7400, sunDir.y * 7400, me.z + sunDir.z * 7400); moonMesh.position.set(me.x + MOON.x * 7400, MOON.y * 7400, me.z + MOON.z * 7400);
 }
+/* ---------- detail level: follows how fast this device draws, or is set by hand ---------- */
+var quality = (function () {
+  var LEVELS = { high: { pr: 2, sh: COARSE ? 2048 : 4096, trees: 1, crowd: 1 }, medium: { pr: 1.5, sh: 2048, trees: 0.6, crowd: 0.6 }, low: { pr: 1, sh: 0, trees: 0.35, crowd: 0.3 } };
+  var ORDER = ['high', 'medium', 'low'], choice = 'auto', level = null, acc = 0, frames = 0, settle = 2.5;
+  try { var saved = localStorage.getItem('lahall-detail'); if (saved === 'auto' || LEVELS[saved]) choice = saved; } catch (e) {}
+  function apply(name) {
+    if (name === level) return; level = name; var L = LEVELS[name];
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, L.pr)); resize();
+    sun.castShadow = L.sh > 0;
+    if (L.sh && L.sh !== SHRES) { SHRES = L.sh; sun.shadow.mapSize.set(SHRES, SHRES); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } shHalf = 0; }
+    treeSets.forEach(function (t) { t.mesh.count = t.trunk.count = Math.max(1, Math.ceil(t.list.length * L.trees)); });
+    traffic.crowd(L.crowd); settle = 2.5; acc = 0; frames = 0; show();
+  }
+  function show() {
+    [].forEach.call($('details').children, function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-v') === choice ? 'true' : 'false'); });
+    $('detailnote').textContent = choice === 'auto' ? T('Now: ', 'Nu: ') + T(level, { high: 'hög', medium: 'medel', low: 'låg' }[level]) : '';
+  }
+  function set(c) { choice = c; try { localStorage.setItem('lahall-detail', c); } catch (e) {} apply(c === 'auto' ? (level || (COARSE ? 'medium' : 'high')) : c); show(); }
+  /* in auto, step down when the frame rate stays low; never back up, so it cannot flutter */
+  function tick(dtReal) {
+    if (choice !== 'auto' || dtReal > 10) return;
+    if (settle > 0) { settle -= dtReal; return; }
+    acc += dtReal; frames++;
+    if (acc >= 3) { var fps = frames / acc, i = ORDER.indexOf(level); acc = 0; frames = 0; if (fps < 27 && i < ORDER.length - 1) apply(ORDER[i + 1]); }
+  }
+  /* coming back to the tab is not a slow frame: start measuring afresh */
+  document.addEventListener('visibilitychange', function () { settle = 2.5; acc = 0; frames = 0; });
+  $('details').addEventListener('click', function (e) { var v = e.target.getAttribute && e.target.getAttribute('data-v'); if (v) set(v); });
+  return { start: function () { apply(choice === 'auto' ? (COARSE ? 'medium' : 'high') : choice); show(); }, tick: tick, set: set, state: function () { return [choice, level]; } };
+})();
 function setTime(t) { todOverride = ((t % 24) + 24) % 24; applySky(); }
 $('sky').addEventListener('click', function () { var p = $('scene'), open = p.hidden; p.hidden = !open; $('sky').setAttribute('aria-expanded', open ? 'true' : 'false'); if (open) $('tod').focus(); else canvas.focus(); });
 function closeScene() { if ($('scene').hidden) return; $('scene').hidden = true; $('sky').setAttribute('aria-expanded', 'false'); }
@@ -2164,13 +2208,14 @@ function resize() {
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.fov = w < h ? 72 : 62; camera.updateProjectionMatrix();
 }
 if (window.ResizeObserver) new ResizeObserver(resize).observe(app); else window.addEventListener('resize', resize);
-resize(); applySky(); tourPose();
+resize(); applySky(); tourPose(); quality.start();
 if (reduced) { tourT = 0.02; tourPose(); }
 var last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
-  var dt = Math.min(0.1, (now - last) / 1000); last = now;
+  var real = (now - last) / 1000, dt = Math.min(0.1, real); last = now;
   if (document.hidden) return;
+  quality.tick(real);
   step(dt); if (!reduced) train.step(dt); else train.step(0); traffic.step(reduced ? 0 : dt);
   camera.position.set(me.x, me.y, me.z); camera.rotation.set(me.pitch, me.yaw, 0);
   skyMesh.position.set(me.x, 0, me.z);
@@ -2187,7 +2232,7 @@ function frame(now) {
 }
 $('veil').hidden = true;
 requestAnimationFrame(frame);
-window.__lahall = { dbg: function (mode) { return journey.components(mode); }, journey: journey, live: live, setSeason: setSeason, setWeather: setWeather, me: me, setMode: setMode, goTo: goTo, traffic: traffic, hAt: hAt };
+window.__lahall = { quality: quality, dbg: function (mode) { return journey.components(mode); }, journey: journey, live: live, setSeason: setSeason, setWeather: setWeather, me: me, setMode: setMode, goTo: goTo, traffic: traffic, hAt: hAt };
 }
 })();
 </script>

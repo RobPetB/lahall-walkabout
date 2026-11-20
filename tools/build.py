@@ -382,10 +382,13 @@ import numpy as np
 from shapely import contains_xy
 H=np.load(D+'dem.npy'); PAD,DX=960,20; nz_,nx_=H.shape
 if LAS:
+    # the scan supports a finer terrain: 10 m lattice (the old terrain is stretched to match and only fills in over open water)
+    DX=10; H=_ndi.zoom(H,((2*nz_-1)/nz_,(2*nx_-1)/nx_),order=1,grid_mode=False); nz_,nx_=H.shape
+if LAS:
     # terrain from the scan's ground points (RH 2000), averaged onto the 20 m lattice
     _wc=_z['wcnt']; _w=np.where(_wc>0,_z['wsum']/np.maximum(_wc,1),np.nan).astype(np.float32); _hole=np.isnan(_w)
     _w=_w[tuple(_ndi.distance_transform_edt(_hole,return_distances=False,return_indices=True))]
-    _w=_ndi.uniform_filter(_w,4); _c=int(_z['meta'][4]); st=DX//_c
+    _c=int(_z['meta'][4]); st=DX//_c; _w=_ndi.uniform_filter(_w,st)
     jj=np.minimum(np.arange(nz_)*st,_w.shape[0]-1); ii=np.minimum(np.arange(nx_)*st,_w.shape[1]-1)
     Hl=_w[np.ix_(jj,ii)]; far=_ndi.distance_transform_edt(_hole)[np.ix_(jj,ii)]*_c
     print('terrain: laser vs old, median difference',round(float(np.median(Hl-H)),2),'m; nodes without nearby ground',int((far>60).sum()),file=sys.stderr)

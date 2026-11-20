@@ -182,23 +182,37 @@ def las_cells(q):
     m=contains_xy(q,X,Z)&LAS['has'][j0:j1,i0:i1]
     return nd[j0:j1,i0:i1][m],X[m],Z[m]
 def laser_roof(q,axes):
-    """Eave height, roof rise, and whether the ridge runs along the short side, from the scan. None when the scan says nothing useful."""
-    inner=q.buffer(-1.0)
-    if inner.is_empty or inner.area<8: inner=q.buffer(-0.4)
-    if inner.is_empty: inner=q
+    """Eave height, roof rise, and whether the ridge runs along the short side, from the scan. None when the scan says nothing useful.
+
+    Seen from above, a pitched roof covers every height between eaves and ridge equally, wherever the ridge lies. So the
+    heights of the cells on the roof are spread evenly, and two percentiles are enough to extend the line to both ends.
+    (Reading the 15th and 92nd percentiles directly, as an earlier version did, puts the eaves about a metre too high.)
+    Fitting a symmetric gable to the footprint was tried and dropped: mapped outlines sit a metre or two off the scan
+    and ridges are rarely central, so it fitted only one house in seven."""
+    inner=q.buffer(-0.5)
+    if inner.is_empty or inner.area<6: inner=q
     v,X,Z=las_cells(inner)
     if len(v)<6: return None
-    eave=float(np.percentile(v,15)); ridge=float(np.percentile(v,92)); med=float(np.median(v))
-    if ridge<2.0: return 'low'          # the scan sees nothing building-sized here
-    if ridge>60: return None
+    top=float(np.percentile(v,90))
+    if top<2.0: return 'low'            # the scan sees nothing building-sized here
+    if top>60: return None
+    roof=v>max(1.6,0.3*top)             # cells far below the roof are ground showing where the outline is off
+    if roof.sum()<6: return None
+    v,X,Z=v[roof],X[roof],Z[roof]
+    h10,h90=[float(x) for x in np.percentile(v,[10,90])]; med=float(np.median(v)); span=(h90-h10)/0.8
+    p75=float(np.percentile(v,75))
+    if h90-h10<0.6: return med,0.0,False,med,p75                  # flat
+    ridge=h90+0.1*span; eave=h10-0.1*span
+    eave-=0.08*(ridge-eave)             # the half-metre strip left out along the walls is the lowest part of the roof
+    eave=max(2.0,eave); rise=ridge-eave
     swap=False
-    if axes and ridge-eave>=0.9 and len(v)>=20:
-        cx,cz,ux,uz=axes; pu=(X-cx)*ux+(Z-cz)*uz; pv=-(X-cx)*uz+(Z-cz)*ux
+    if axes and len(v)>=20:
+        cx,cz,ux,uz,hl,hw=axes; pu=(X-cx)*ux+(Z-cz)*uz; pv=-(X-cx)*uz+(Z-cz)*ux
         def corr(a,b_):
             sa,sb=a.std(),b_.std(); return 0.0 if sa<1e-6 or sb<1e-6 else float(((a-a.mean())*(b_-b_.mean())).mean()/(sa*sb))
         along=corr(v,-np.abs(pv)); across=corr(v,-np.abs(pu))     # a ridge along the long side falls away sideways
         swap=across>along+0.15 and across>0.3
-    return eave,ridge-eave,swap,med
+    return eave,rise,swap,med,p75
 from shapely.strtree import STRtree
 bl=L('building')
 # hand corrections: things the open map gets wrong and someone who knows the place has pointed out
@@ -236,7 +250,7 @@ for g,p in bl:
             l1=math.hypot(*e1); l2=math.hypot(*e2)
             if l1<l2: e1,e2,l1,l2=e2,e1,l2,l1
             if l1>0 and l2>0: rect=(e1,e2,l1,l2,a/r.area>0.8)
-        las=laser_roof(q,(r.centroid.x,r.centroid.y,rect[0][0]/rect[2],rect[0][1]/rect[2]) if rect else None) if LAS else None
+        las=laser_roof(q,(r.centroid.x,r.centroid.y,rect[0][0]/rect[2],rect[0][1]/rect[2],rect[2]/2,rect[3]/2) if rect and rect[4] else None) if LAS else None
         if las=='low':
             # a 'building' that the scan shows flat on the ground and that sits on a mapped pool is the pool, not a house
             if _pooltree is not None and sum(q.intersection(poolgeoms[int(i)]).area for i in _pooltree.query(q))>=0.35*a: _npool+=1; continue
@@ -244,10 +258,17 @@ for g,p in bl:
         rise=None
         if las:
             # the scan decides: wall height to the eaves, how much roof sits on top, and which way the ridge runs
-            _nlas+=1; rise=las[1] if las[1]>=0.9 else 0.0; H=max(2.2,las[0] if rise else las[3])
+            _nlas+=1; rise=las[1]; H=max(2.0,las[0] if rise else las[3])
+            # sanity: a roof pitch outside 10-52 degrees is not a pitched roof. Big blocks with stepped flat roofs and plant
+            # rooms spread their heights too, and a tree over a house makes the 'ridge' too high.
+            half=rect[3]/2 if rect else math.sqrt(a)/2
+            big=t in (1,3) or a>350
+            if rise and (rise/half<0.18 or (big and rise/half<0.3)): rise=0.0; H=max(2.0,las[3])
+            elif rise and big and rise>4.5: rise=0.0; H=max(2.0,las[4])      # a block with a low wing and a taller part: show the taller part's height
+            elif rise and rise/half>1.28: rise=1.28*half
             # a small building under a tree reads as tall as the tree: keep outbuildings and houses within what such buildings are
             if t==2: H=min(H,4.2); rise=min(rise,2.2)
-            elif t==0: H=min(H,8.5); rise=min(rise,5.5)
+            elif t==0: H=min(H,8.5); rise=min(rise,6.5)
             if rect and las[2]: rect=(rect[1],rect[0],rect[3],rect[2],rect[4])
         if p.get('_h'): H=float(p['_h']); rise=float(p.get('_rise') or 0); las=las or (H,rise,False,H)   # a stated size beats the scan
         pitched=(rise>0) if las else (t in (0,2) or (t==3 and c=='church'))

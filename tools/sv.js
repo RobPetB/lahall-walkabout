@@ -1,0 +1,22 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const errs = []; const p = await (await b.newContext({ viewport: { width: 1200, height: 740 }, locale: 'sv-SE' })).newPage();
+  p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); }); p.on('pageerror', e => errs.push(e.message));
+  await p.addInitScript(() => { try { localStorage.setItem('lahall-detail', 'low'); } catch (e) {} });
+  await p.route('**/three.min.js', r => r.fulfill({ path: __dirname + '/node_modules/three/build/three.min.js', contentType: 'text/javascript' }));
+  await p.route('**/fonts.googleapis.com/**', r => r.fulfill({ body: '', contentType: 'text/css' }));
+  await p.goto('http://localhost:8765/index.html'); await p.waitForTimeout(13000);
+  await p.screenshot({ path: process.argv[2] + '/sv-hello.png' });
+  const txt = sel => p.evaluate(sel => [...document.querySelectorAll(sel)].map(e => e.textContent.trim()).join(' | '), sel);
+  console.log('modes', await txt('.seg button')); console.log('hello', (await txt('#hello li')).slice(0, 160));
+  await p.evaluate(() => { document.getElementById('hellogo').click(); document.getElementById('sky').click(); }); await p.waitForTimeout(800); await p.screenshot({ path: process.argv[2] + '/sv-panel.png' });
+  console.log('panel', await txt('#scene > span, #scene > label, #scene > button'));
+  await p.evaluate(() => { const $ = id => document.getElementById(id); $('sky').click(); $('rt').click(); $('rfrom').value = 'Lahällsvägen 25'; $('rto').value = 'Näsbypark station'; document.querySelector('#rmodes [data-v=train]').click(); });
+  console.log('route', await txt('#rnote')); console.log('route ui', await txt('#route > label, #route > span:not(#rnote), #route > button, #rspeed button'));
+  await p.evaluate(() => document.querySelector('#rmodes [data-v=drive]').click()); console.log('drive', await txt('#rnote'));
+  await p.evaluate(() => document.getElementById('rplay').click()); await p.waitForTimeout(5000); console.log('trip', await txt('#tripinfo'), '||', await txt('#tripbar button'), '||', await txt('.plate small'), '||', (await txt('#readout')).slice(0, 90));
+  await p.evaluate(() => { document.getElementById('tstop').click(); const q = document.getElementById('q'); q.value = 'lahallsvagen 25'; q.dispatchEvent(new Event('input')); }); await p.waitForTimeout(500); console.log('search', (await txt('#hits li')).slice(0, 260));
+  await p.evaluate(() => document.getElementById('lang').click()); await p.waitForTimeout(500); console.log('english', await txt('#m-tour, #m-walk, #rt, #l-season, #lang'), '||', (await txt('#readout')).slice(0, 80));
+  console.log(errs.length ? errs.join('\n') : 'no errors'); await b.close();
+})();

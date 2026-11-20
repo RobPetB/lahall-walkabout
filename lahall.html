@@ -192,6 +192,7 @@ body { background: var(--sky); color: var(--panel-fg); font-family: var(--font-s
           <button type="button" class="tool" id="vshare">Copy link to this view</button>
           <input class="tool rin" id="sharelink" type="text" readonly hidden aria-label="Link to share">
           <span id="sharenote" class="livenote" role="status"></span>
+          <button type="button" class="tool" id="lang">På svenska</button>
           <span id="l-detail">Detail</span>
           <div class="seg" role="group" aria-labelledby="l-detail" id="details"><button type="button" data-v="auto" aria-pressed="true">Auto</button><button type="button" data-v="high" aria-pressed="false">High</button><button type="button" data-v="medium" aria-pressed="false">Medium</button><button type="button" data-v="low" aria-pressed="false">Low</button></div>
           <span id="detailnote" class="livenote"></span>
@@ -282,13 +283,13 @@ fetch('world.json').then(function (r) { if (!r.ok) throw new Error(r.status); re
     var ready = document.fonts && document.fonts.ready ? Promise.race([document.fonts.ready, new Promise(function (r) { setTimeout(r, 1500); })]) : Promise.resolve();
     return ready.then(function () { start(w); });
   })
-  .catch(function (e) { fail('The map of Lahäll could not be loaded (' + e.message + '). Reload to try again.'); });
+  .catch(function (e) { fail(T('The map of Lahäll could not be loaded (' + e.message + '). Reload to try again.', 'Kartan över Lahäll gick inte att ladda (' + e.message + '). Ladda om sidan för att försöka igen.')); });
 
 function start(W) {
 var M = W.meta, XW = M.xw, ZW = M.zw;
 var renderer;
 try { renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, powerPreference: 'high-performance' }); }
-catch (e) { fail('This browser could not start WebGL, which the 3D view needs.'); return; }
+catch (e) { fail(T('This browser could not start WebGL, which the 3D view needs.', 'Webbläsaren kunde inte starta WebGL, som 3D-vyn behöver.')); return; }
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 var scene = new THREE.Scene();
 var camera = new THREE.PerspectiveCamera(62, 1, 0.4, 9000);
@@ -296,6 +297,7 @@ camera.rotation.order = 'YXZ';
 
 /* ---------- small helpers ---------- */
 var LANG = 'en';
+try { var _l = localStorage.getItem('lahall-lang'); LANG = _l === 'sv' || _l === 'en' ? _l : (/^sv/i.test(navigator.language || '') ? 'sv' : 'en'); } catch (e) { LANG = /^sv/i.test(navigator.language || '') ? 'sv' : 'en'; }
 function T(en, sv) { return LANG === 'sv' && sv !== undefined ? sv : en; }
 function rnd(seed) { var x = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function col(hex) { return new THREE.Color(hex); }
@@ -1563,7 +1565,7 @@ var sound = (function () {
   document.addEventListener('visibilitychange', function () { if (ctx && on) { if (document.hidden) ctx.suspend(); else ctx.resume(); } });
   return { step: step, set: set, isOn: function () { return on; } };
 })();
-$('snd').addEventListener('click', function () { var v = !sound.isOn(); if (!sound.set(v)) { this.textContent = 'No sound here'; this.disabled = true; return; } this.setAttribute('aria-pressed', v ? 'true' : 'false'); this.textContent = v ? 'Sound on' : 'Sound off'; });
+$('snd').addEventListener('click', function () { var v = !sound.isOn(); if (!sound.set(v)) { this.textContent = T('No sound here', 'Inget ljud här'); this.disabled = true; return; } this.setAttribute('aria-pressed', v ? 'true' : 'false'); this.textContent = v ? T('Sound on', 'Ljud på') : T('Sound off', 'Ljud av'); });
 
 /* ---------- live: the real clock and the real weather over Täby ---------- */
 var live = (function () {
@@ -1574,11 +1576,11 @@ var live = (function () {
     catch (e) { var d = new Date(); return { h: d.getHours() + d.getMinutes() / 60, m: d.getMonth() + 1 }; }
   }
   function kind(code, cover) { /* WMO weather codes, with cloud cover in percent */
-    if (code === 45 || code === 48) return ['fog', 'fog'];
-    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return ['snow', 'snow'];
-    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95) return ['rain', code >= 95 ? 'thunder' : 'rain'];
-    if (code >= 3 || (code === 2 && cover >= 60)) return ['cloudy', code >= 3 ? 'overcast' : 'mostly cloudy'];
-    return ['clear', code >= 1 ? 'some cloud' : 'clear sky'];
+    if (code === 45 || code === 48) return ['fog', T('fog', 'dimma')];
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return ['snow', T('snow', 'snöfall')];
+    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95) return ['rain', code >= 95 ? T('thunder', 'åska') : T('rain', 'regn')];
+    if (code >= 3 || (code === 2 && cover >= 60)) return ['cloudy', code >= 3 ? T('overcast', 'mulet') : T('mostly cloudy', 'mest molnigt')];
+    return ['clear', code >= 1 ? T('some cloud', 'lite moln') : T('clear sky', 'klar himmel')];
   }
   function note(t) { $('livenote').textContent = t; }
   function apply() {
@@ -1586,21 +1588,21 @@ var live = (function () {
     var w = last ? kind(last.weather_code, last.cloud_cover || 0) : null, wname = w ? w[0] : weatherNow; if (wname === 'snow' && season !== 'winter') wname = 'rain';
     internal = true; playing = false; $('play').setAttribute('aria-pressed', 'false');
     if (season !== seasonNow) setSeason(season); if (wname !== weatherNow || last) setWeather(wname, true, last ? (last.cloud_cover || 0) / 100 : undefined); setTime(now.h); internal = false;
-    if (last) note('Täby now: ' + Math.round(last.temperature_2m) + ' °C, ' + w[1] + (sn ? ', snow on the ground' : '') + '. Weather from Open-Meteo, updated every 10 minutes.');
+    if (last) note(T('Täby now: ', 'Täby just nu: ') + Math.round(last.temperature_2m) + ' °C, ' + w[1] + (sn ? T(', snow on the ground', ', snö på marken') : '') + T('. Weather from Open-Meteo, updated every 10 minutes.', '. Väder från Open-Meteo, uppdateras var tionde minut.'));
   }
   function pull() {
     if (busy) return; busy = true;
     var ctl = window.AbortController ? new AbortController() : null, to = setTimeout(function () { if (ctl) ctl.abort(); }, 12000);
     fetch(URL, ctl ? { signal: ctl.signal } : undefined).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (j) { if (!j || !j.current || typeof j.current.weather_code !== 'number') throw new Error('bad reply'); last = j.current; if (on) apply(); })
-      .catch(function () { if (on && !last) note('The clock and season are live, but the weather service cannot be reached from this copy of the page, so pick the weather yourself.'); })
+      .catch(function () { if (on && !last) note(T('The clock and season are live, but the weather service cannot be reached from this copy of the page, so pick the weather yourself.', 'Klockan och årstiden är live, men vädertjänsten går inte att nå från den här kopian av sidan, så välj vädret själv.')); })
       .then(function () { clearTimeout(to); busy = false; });
   }
   var internal = false, ticks = 0;
   function set(v) {
     on = v; $('live').setAttribute('aria-pressed', v ? 'true' : 'false'); clearInterval(timer);
     if (!v) { note(''); return; }
-    note('Checking the weather…'); apply(); pull(); ticks = 0;
+    note(T('Checking the weather…', 'Hämtar vädret…')); apply(); pull(); ticks = 0;
     timer = setInterval(function () { if (document.hidden) return; apply(); if (++ticks % 10 === 0) pull(); }, 60000);
   }
   $('live').addEventListener('click', function () { set(!on); });
@@ -1731,7 +1733,7 @@ var searchFind = null;
     if (m) {
       var lat = parseFloat(m[1].replace(',', '.')), lon = parseFloat(m[2].replace(',', '.')), x = (lon - M.lon0) * M.mx, z = -(lat - M.lat0) * M.mz;
       if (Math.abs(x) < XW && Math.abs(z) < ZW) return [{ t: lat.toFixed(5) + '°N ' + lon.toFixed(5) + '°E', x: x, z: z, kind: 'Coordinates' }];
-      return [{ note: 'Those coordinates are outside the mapped square, which reaches about 1 km in each direction from Lahäll station.' }];
+      return [{ note: T('Those coordinates are outside the mapped area, which reaches about 2 km in each direction from Lahäll station.', 'De koordinaterna ligger utanför det kartlagda området, som sträcker sig ungefär 2 km åt varje håll från Lahälls station.') }];
     }
     var n = norm(text); if (!n) return placeIdx.slice();
     var toks = n.split(' ');
@@ -1757,15 +1759,15 @@ var searchFind = null;
             }
           });
           var label = st.t + ' ' + am[2] + am[3].toUpperCase();
-          return [{ note: 'No exact position is on record for ' + label + '. The estimate below is placed on the street between ' + (lo === hi ? 'the entrances of number ' + lo.t.split(' ').pop() : 'numbers ' + lo.t.split(' ').pop() + ' and ' + hi.t.split(' ').pop()) + ', so it can be some houses off.' },
+          return [{ note: T('No exact position is on record for ' + label + '. The estimate below is placed on the street between ' + (lo === hi ? 'the entrances of number ' + lo.t.split(' ').pop() : 'numbers ' + lo.t.split(' ').pop() + ' and ' + hi.t.split(' ').pop()) + ', so it can be some houses off.', 'Det finns inget exakt läge för ' + label + '. Uppskattningen nedan ligger på gatan ' + (lo === hi ? 'vid nummer ' + lo.t.split(' ').pop() : 'mellan nummer ' + lo.t.split(' ').pop() + ' och ' + hi.t.split(' ').pop()) + ', så den kan hamna några hus fel.') },
             { t: label, x: bx, z: bz, kind: 'Estimated position' }, st, lo].concat(lo === hi ? [] : [hi]);
         }
         var near = (byStreet[st.n] || []).slice().sort(function (a, b) { return Math.abs(a.num - want) - Math.abs(b.num - want); }).slice(0, 4);
-        out.push({ note: 'No position is on record for ' + st.t + ' ' + am[2] + am[3].toUpperCase() + '. ' + (near.length ? 'The street and its nearest known numbers:' : 'Open map data has no house numbers for this street. You can go to the street, or paste coordinates such as 59.4240, 18.0741.') });
+        out.push({ note: T('No position is on record for ' + st.t + ' ' + am[2] + am[3].toUpperCase() + '. ' + (near.length ? 'The street and its nearest known numbers:' : 'Open map data has no house numbers for this street. You can go to the street, or paste coordinates such as 59.4240, 18.0741.'), 'Det finns inget läge för ' + st.t + ' ' + am[2] + am[3].toUpperCase() + '. ' + (near.length ? 'Gatan och de närmaste kända numren:' : 'Öppna kartdata saknar husnummer för den här gatan. Du kan gå till gatan, eller klistra in koordinater som 59.4240, 18.0741.')) });
         out.push(st); return out.concat(near);
       }
     }
-    if (!hits.length) return [{ note: 'Nothing in Lahäll matches. Try a street name, or paste coordinates such as 59.4240, 18.0741.' }];
+    if (!hits.length) return [{ note: T('Nothing here matches. Try a street name, or paste coordinates such as 59.4240, 18.0741.', 'Ingenting matchar. Prova ett gatunamn, eller klistra in koordinater som 59.4240, 18.0741.') }];
     return hits.slice(0, 9);
   }
   function render() {
@@ -1775,7 +1777,7 @@ var searchFind = null;
       if (e.note) { li.className = 'note'; li.textContent = e.note; }
       else {
         li.setAttribute('role', 'option'); li.id = 'hit' + i; li.setAttribute('aria-selected', 'false');
-        var a = document.createElement('span'), b = document.createElement('small'); a.textContent = e.t; b.textContent = e.kind; li.appendChild(a); li.appendChild(b);
+        var a = document.createElement('span'), b = document.createElement('small'); a.textContent = e.t; b.textContent = T(e.kind, { 'Address': 'Adress', 'Address, business listing': 'Adress, företagsregister', 'Street': 'Gata', 'Place': 'Plats', 'Coordinates': 'Koordinater', 'Estimated position': 'Uppskattat läge' }[e.kind]); li.appendChild(a); li.appendChild(b);
         li.addEventListener('pointerdown', function (ev) { ev.preventDefault(); pick(i); });
       }
       box.appendChild(li);
@@ -1842,7 +1844,7 @@ var journey = (function () {
     bike: function (c) { return c === 'cycleway' ? 5 : (c === 'path' || c === 'footway' || c === 'track' ? 3 : 4.5); },
     drive: function (c) { return (traffic.CAR[c] || 5) * 0.85; }
   };
-  var UNNAMED = { footway: 'Footpath', path: 'Path', cycleway: 'Cycle path', steps: 'Steps', service: 'Service road', track: 'Track', bridleway: 'Bridle path', pedestrian: 'Pedestrian street', motorway: 'E18' };
+  var UNNAMED_EN = { footway: 'Footpath', path: 'Path', cycleway: 'Cycle path', steps: 'Steps', service: 'Service road', track: 'Track', bridleway: 'Bridle path', pedestrian: 'Pedestrian street', motorway: 'E18' }, UNNAMED_SV = { footway: 'Gångväg', path: 'Stig', cycleway: 'Cykelbana', steps: 'Trappa', service: 'Tillfartsväg', track: 'Skogsväg', bridleway: 'Ridväg', pedestrian: 'Gågata', motorway: 'E18' };
   var NETS = { walk: traffic.nets.ped, bike: traffic.nets.bike, drive: traffic.nets.car }, graphs = {};
   function graph(mode) {
     if (graphs[mode]) return graphs[mode];
@@ -1895,7 +1897,7 @@ var journey = (function () {
     r.cum.forEach(function (c) { if (c > Math.min(s0, s1) + 0.05 && c < Math.max(s0, s1) - 0.05) cuts.push(c); });
     for (var i = 1; i < n; i++) cuts.push(s0 + (s1 - s0) * i / n);
     cuts.push(s1); cuts.sort(function (a, b) { return s1 >= s0 ? a - b : b - a; });
-    var nm = roads[k].n >= 0 ? W.names[roads[k].n] : (UNNAMED[r.c] || 'Unnamed road');
+    var nm = roads[k].n >= 0 ? W.names[roads[k].n] : ((LANG === 'sv' ? UNNAMED_SV : UNNAMED_EN)[r.c] || T('Unnamed road', 'Namnlös väg'));
     cuts.forEach(function (s) { traffic.at(k, s, o); out.push({ x: o.x, z: o.z, y: hAt(o.x, o.z) + o.l, n: nm }); });
   }
   function leg(mode, pts, time, label) {
@@ -1922,7 +1924,7 @@ var journey = (function () {
     pts.push(pt(B.x, B.z));
     return leg(mode, pts, best + (a.d + b.d) / FOOTSPEED, null);
   }
-  var STATIONS = train.stations.map(function (s, i) { var q = train.at(s, {}); return { s: s, x: q.x, z: q.z, name: (W.train.names || [])[i] || 'the stop' }; });
+  var STATIONS = train.stations.map(function (s, i) { var q = train.at(s, {}); return { s: s, x: q.x, z: q.z, name: (W.train.names || [])[i] || T('the stop', 'hållplatsen') }; });
   function plan(A, B, mode) {
     if (mode !== 'train') { var l = single(A, B, mode); return l ? { legs: [l] } : null; }
     var direct = single(A, B, 'walk'), best = null;
@@ -1934,9 +1936,9 @@ var journey = (function () {
         if (!best || guess < best.guess) best = { S1: S1, S2: S2, ride: ride, guess: guess };
       });
     });
-    if (!best) return direct ? { legs: [direct], note: 'There is no train stop to use here, so this is the walk.' } : null;
+    if (!best) return direct ? { legs: [direct], note: T('There is no train stop to use here, so this is the walk.', 'Det finns ingen användbar hållplats här, så det här är gångvägen.') } : null;
     var w1 = single(A, best.S1, 'walk'), w2 = single(best.S2, B, 'walk');
-    if (!w1 || !w2 || (direct && direct.time <= w1.time + best.ride + w2.time)) return direct ? { legs: [direct], note: 'Walking all the way is quicker than taking the train for this trip.' } : null;
+    if (!w1 || !w2 || (direct && direct.time <= w1.time + best.ride + w2.time)) return direct ? { legs: [direct], note: T('Walking all the way is quicker than taking the train for this trip.', 'Det går fortare att gå hela vägen än att ta tåget på den här sträckan.') } : null;
     var pts = [], n = Math.max(2, Math.ceil(Math.abs(best.S2.s - best.S1.s) / 8));
     for (var i = 0; i <= n; i++) { var q = train.at(best.S1.s + (best.S2.s - best.S1.s) * i / n, {}); pts.push({ x: q.x, z: q.z, y: hAt(q.x, q.z) + railLift(q.x, q.z), n: 'Roslagsbanan' }); }
     var t = leg('train', pts, best.ride, null); t.s0 = best.S1.s; t.s1 = best.S2.s; t.from = best.S1.name; t.to = best.S2.name;
@@ -1964,9 +1966,9 @@ var journey = (function () {
     if (!startPin) { startPin = new THREE.Group(); var m = new THREE.MeshBasicMaterial({ color: '#12a05c' }), pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 7, 6), m), ball = new THREE.Mesh(new THREE.SphereGeometry(1.7, 12, 10), m); pole.position.y = 3.5; ball.position.y = 7.6; startPin.add(pole); startPin.add(ball); scene.add(startPin); }
     startPin.position.set(A.x, standY(A.x, A.z, 1e9), A.z); startPin.visible = true;
   }
-  function dur(t) { var m = Math.max(1, Math.round(t / 60)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; }
-  function far(d) { return d < 950 ? Math.round(d / 10) * 10 + ' m' : (d / 1000).toFixed(1) + ' km'; }
-  var VERB = { walk: 'on foot', bike: 'by bike', drive: 'by car' };
+  function dur(t) { var m = Math.max(1, Math.round(t / 60)); return m < 60 ? m + ' min' : Math.floor(m / 60) + T(' h ', ' tim ') + (m % 60) + ' min'; }
+  function far(d) { return d < 950 ? Math.round(d / 10) * 10 + ' m' : (d / 1000).toFixed(1).replace('.', T('.', ',')) + ' km'; }
+  function VERB(m) { return T({ walk: 'on foot', bike: 'by bike', drive: 'by car' }[m], { walk: 'till fots', bike: 'med cykel', drive: 'med bil' }[m]); }
   /* clock time in Täby, some seconds from now */
   function clock(plus) {
     var t = new Date(Date.now() + (plus || 0) * 1000);
@@ -1977,10 +1979,10 @@ var journey = (function () {
   function describe(route) {
     var total = 0, dist = 0; route.legs.forEach(function (l) { total += l.time; dist += l.len; });
     var parts = route.legs.map(function (l) {
-      if (l.mode === 'train') return 'train ' + l.from + ' to ' + l.to + ', ' + dur(l.time) + ' with the wait';
-      return (route.legs.length > 1 ? 'walk ' + far(l.len) + (l.to ? ' to ' + l.to : '') + ', ' + dur(l.time) : far(l.len) + ', about ' + dur(l.time) + ' ' + VERB[l.mode]);
+      if (l.mode === 'train') return T('train ', 'tåg ') + l.from + T(' to ', ' till ') + l.to + ', ' + dur(l.time) + T(' with the wait', ' med väntan');
+      return (route.legs.length > 1 ? T('walk ', 'gå ') + far(l.len) + (l.to ? T(' to ', ' till ') + l.to : '') + ', ' + dur(l.time) : far(l.len) + T(', about ', ', ungefär ') + dur(l.time) + ' ' + VERB(l.mode));
     });
-    return (route.legs.length > 1 ? 'About ' + dur(total) + ' in all: ' + parts.join('; ') + '.' : parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + '.') + (route.note ? ' ' + route.note : '');
+    return (route.legs.length > 1 ? T('About ', 'Ungefär ') + dur(total) + T(' in all: ', ' totalt: ') + parts.join('; ') + '.' : parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + '.') + (route.note ? ' ' + route.note : '');
   }
 
   /* --- the trip: the camera travels the route --- */
@@ -1992,14 +1994,14 @@ var journey = (function () {
   }
   function start() {
     if (!cur) return false; li = 0; d = 0; head = null;
-    eta = clock(total(cur)); waitT = null; setMode('fly'); running = true; paused = false; lookYaw = lookPitch = 0; zoom = 1; $('tpause').textContent = 'Pause'; $('tpause').setAttribute('aria-pressed', 'false'); $('tripbar').hidden = false; barT = 0; me.mode = 'route'; app.setAttribute('data-mode', 'route'); MODES.forEach(function (k) { $('m-' + k).setAttribute('aria-pressed', 'false'); });
+    eta = clock(total(cur)); waitT = null; setMode('fly'); running = true; paused = false; lookYaw = lookPitch = 0; zoom = 1; $('tpause').textContent = T('Pause', 'Pausa'); $('tpause').setAttribute('aria-pressed', 'false'); $('tripbar').hidden = false; barT = 0; me.mode = 'route'; app.setAttribute('data-mode', 'route'); MODES.forEach(function (k) { $('m-' + k).setAttribute('aria-pressed', 'false'); });
     return true;
   }
   function stop(arrived) {
     running = false; ride.car.visible = ride.bike.visible = false; walker.visible = false; $('tripbar').hidden = true;
     if (me.mode === 'route') { me.mode = 'fly'; setMode('walk'); }
-    $('rplay').textContent = 'Start trip'; $('rplay').setAttribute('aria-pressed', 'false');
-    if (arrived) $('rnote').textContent = 'You have arrived. ' + describe(cur) + ' Having left when the trip started, you would be there at ' + eta + '.';
+    $('rplay').textContent = T('Start trip', 'Starta resan'); $('rplay').setAttribute('aria-pressed', 'false');
+    if (arrived) $('rnote').textContent = T('You have arrived. ', 'Du är framme. ') + describe(cur) + T(' Having left when the trip started, you would be there at ', ' Om du hade gett dig av när resan startade hade du varit framme ') + eta + '.';
   }
   /* the figure you follow on the walking legs */
   var walker = new THREE.Group(), wlegs;
@@ -2010,13 +2012,13 @@ var journey = (function () {
     walker.visible = false; scene.add(walker);
   })();
   var waitT = null, eta = '', q = {}, q2 = {}, view = 'above', paused = false, lookYaw = 0, lookPitch = 0, zoom = 1, barT = 0;
-  var DOING = { walk: 'Walking', bike: 'Cycling', drive: 'Driving', train: 'On the train' };
+  function DOING(m) { return T({ walk: 'Walking', bike: 'Cycling', drive: 'Driving', train: 'On the train' }[m], { walk: 'Går', bike: 'Cyklar', drive: 'Kör', train: 'På tåget' }[m]); }
   function bar() {
     var l = cur.legs[li], left = l.len - d; for (var i = li + 1; i < cur.legs.length; i++) left += cur.legs[i].len;
     if (waitT > 0 && l.mode === 'train') { $('tripinfo').textContent = (paused ? T('Paused · ', 'Pausad · ') : '') + T('Waiting for the train at ', 'Väntar på tåget vid ') + l.from; return; }
-    var w = where(), on = w && w.name && l.mode !== 'train' ? ' on ' + w.name : '';
+    var w = where(), on = w && w.name && l.mode !== 'train' ? T(' on ', ' på ') + w.name : '';
     var tl = l.time * (1 - d / (l.len || 1)); for (i = li + 1; i < cur.legs.length; i++) tl += cur.legs[i].time;
-    $('tripinfo').textContent = (paused ? 'Paused · ' : '') + DOING[l.mode] + (on || (l.to ? ' to ' + l.to : '')) + ' · ' + far(Math.max(0, left)) + ' · ' + (tl < 60 ? Math.max(0, Math.round(tl / 5) * 5) + ' s' : (tl < 600 ? Math.floor(tl / 60) + ' min ' + ('0' + Math.floor(tl % 60 / 10) * 10).slice(-2) + ' s' : dur(tl))) + ' left · arrive ' + eta;
+    $('tripinfo').textContent = (paused ? T('Paused · ', 'Pausad · ') : '') + DOING(l.mode) + (on || (l.to ? T(' to ', ' till ') + l.to : '')) + ' · ' + far(Math.max(0, left)) + ' · ' + (tl < 60 ? Math.max(0, Math.round(tl / 5) * 5) + ' s' : (tl < 600 ? Math.floor(tl / 60) + ' min ' + ('0' + Math.floor(tl % 60 / 10) * 10).slice(-2) + ' s' : dur(tl))) + T(' left · arrive ', ' kvar · framme ') + eta;
   }
   /* which road the traveller is on, and the next one coming up */
   function where() {
@@ -2024,10 +2026,10 @@ var journey = (function () {
     var l = cur.legs[li], c = l.cum, i = 1; while (i < c.length - 1 && c[i] < d) i++;
     var name = l.pts[i].n || l.pts[i - 1].n || null, next = null, nd = 0;
     for (var j = i + 1; j < l.pts.length; j++) { var n = l.pts[j].n; if (n && name && n !== name) { var k = j; while (k < l.pts.length - 1 && l.pts[k + 1].n === n) k++; if (c[k] - c[j] >= 15 || k === l.pts.length - 1) { next = n; nd = c[j] - d; break; } j = k; } }
-    if (!next && li < cur.legs.length - 1) { var nl = cur.legs[li + 1]; next = nl.mode === 'train' ? 'the train at ' + nl.from : 'on foot from ' + (nl.from || 'the stop'); nd = l.len - d; }
+    if (!next && li < cur.legs.length - 1) { var nl = cur.legs[li + 1]; next = nl.mode === 'train' ? T('the train at ', 'tåget vid ') + nl.from : T('on foot from ', 'till fots från ') + (nl.from || T('the stop', 'hållplatsen')); nd = l.len - d; }
     posAt(l, d, q2); return { x: q2.x, z: q2.z, name: name, next: next, dist: Math.max(0, nd) };
   }
-  function setView(v) { view = v; lookYaw = lookPitch = 0; $('tview').textContent = v === 'above' ? 'Close up' : 'From above'; }
+  function setView(v) { view = v; lookYaw = lookPitch = 0; $('tview').textContent = v === 'above' ? T('Close up', 'Närbild') : T('From above', 'Ovanifrån'); }
   function step(dt) {
     if (!running || !cur) { stop(false); return; }
     var l = cur.legs[li], v = l.len / Math.max(1, l.time - (l.mode === 'train' ? 90 : 0));
@@ -2063,7 +2065,7 @@ var journey = (function () {
   }
   function look(dx, dy) { lookYaw -= dx; lookPitch = Math.max(-1.2, Math.min(1.2, lookPitch - dy)); }
   function zoomBy(f) { zoom = Math.max(0.35, Math.min(4, zoom * f)); }
-  $('tpause').addEventListener('click', function () { paused = !paused; this.textContent = paused ? 'Resume' : 'Pause'; this.setAttribute('aria-pressed', paused ? 'true' : 'false'); bar(); canvas.focus(); });
+  $('tpause').addEventListener('click', function () { paused = !paused; this.textContent = paused ? T('Resume', 'Fortsätt') : T('Pause', 'Pausa'); this.setAttribute('aria-pressed', paused ? 'true' : 'false'); bar(); canvas.focus(); });
   $('tview').addEventListener('click', function () { setView(view === 'above' ? 'close' : 'above'); canvas.focus(); });
   $('tstop').addEventListener('click', function () { stop(false); canvas.focus(); });
 
@@ -2077,16 +2079,16 @@ var journey = (function () {
   var modeNow = 'walk', lastAsk = null;
   $('rshare').addEventListener('click', function () { if (lastAsk) share((lastAsk.from ? 'from=' + encodeURIComponent(lastAsk.from) + '&' : '') + 'to=' + encodeURIComponent(lastAsk.to) + '&by=' + lastAsk.by, 'rnote'); });
   function go() {
-    var ft = $('rfrom').value.trim(), A = ft ? resolve(ft) : { x: ride.on ? ride.x : me.x, z: ride.on ? ride.z : me.z, name: 'where you are' }, B = resolve($('rto').value), note = $('rnote');
+    var ft = $('rfrom').value.trim(), A = ft ? resolve(ft) : { x: ride.on ? ride.x : me.x, z: ride.on ? ride.z : me.z, name: T('where you are', 'där du är') }, B = resolve($('rto').value), note = $('rnote');
     if (running) stop(false); clear(); $('rplay').hidden = true; $('rspeed').hidden = true; $('rshare').hidden = true;
-    if (!A) { note.textContent = 'Could not find "' + ft + '". Try a street name, an address or a place.'; return null; }
-    if (!B) { note.textContent = $('rto').value.trim() ? 'Could not find "' + $('rto').value.trim() + '". Try a street name, an address or a place.' : 'Say where you want to go.'; return null; }
-    if (Math.hypot(A.x - B.x, A.z - B.z) < 5) { note.textContent = 'Those are the same place.'; return null; }
+    if (!A) { note.textContent = T('Could not find "' + ft + '". Try a street name, an address or a place.', 'Hittade inte "' + ft + '". Prova ett gatunamn, en adress eller en plats.'); return null; }
+    if (!B) { note.textContent = $('rto').value.trim() ? T('Could not find "' + $('rto').value.trim() + '". Try a street name, an address or a place.', 'Hittade inte "' + $('rto').value.trim() + '". Prova ett gatunamn, en adress eller en plats.') : T('Say where you want to go.', 'Skriv vart du vill åka.'); return null; }
+    if (Math.hypot(A.x - B.x, A.z - B.z) < 5) { note.textContent = T('Those are the same place.', 'Det är samma plats.'); return null; }
     var route = plan(A, B, modeNow);
-    if (!route) { note.textContent = 'No way through was found ' + (VERB[modeNow] || 'that way') + ' between ' + A.name + ' and ' + B.name + '. The connecting roads probably leave the mapped area; try another way of travelling.'; return null; }
+    if (!route) { note.textContent = T('No way through was found ' + (VERB(modeNow) || 'that way') + ' between ' + A.name + ' and ' + B.name + '. The connecting roads probably leave the mapped area; try another way of travelling.', 'Ingen väg hittades ' + (VERB(modeNow) || 'på det sättet') + ' mellan ' + A.name + ' och ' + B.name + '. Vägarna däremellan går troligen utanför det kartlagda området; prova ett annat färdsätt.'); return null; }
     cur = route; draw(route, A); dropPin(B.name, B.x, B.z, standY(B.x, B.z, 1e9) - hAt(B.x, B.z));
-    note.textContent = 'From ' + A.name + ' to ' + B.name + '. ' + describe(route) + ' Leave now and you arrive about ' + clock(total(route)) + '.';
-    $('rplay').hidden = false; $('rspeed').hidden = false; $('rshare').hidden = false; $('rplay').textContent = 'Start trip';
+    note.textContent = T('From ', 'Från ') + A.name + T(' to ', ' till ') + B.name + '. ' + describe(route) + T(' Leave now and you arrive about ', ' Ger du dig av nu är du framme ungefär ') + clock(total(route)) + '.';
+    $('rplay').hidden = false; $('rspeed').hidden = false; $('rshare').hidden = false; $('rplay').textContent = T('Start trip', 'Starta resan');
     lastAsk = { from: ft, to: $('rto').value.trim(), by: modeNow };
     return route;
   }
@@ -2095,7 +2097,7 @@ var journey = (function () {
   $('rmodes').addEventListener('click', function (e) { var v = e.target.getAttribute && e.target.getAttribute('data-v'); if (!v) return; modeNow = v; [].forEach.call(this.children, function (b) { b.setAttribute('aria-pressed', b === e.target ? 'true' : 'false'); }); if ($('rto').value.trim()) go(); });
   $('rspeed').addEventListener('click', function (e) { var v = e.target.getAttribute && e.target.getAttribute('data-v'); if (!v) return; mult = +v; [].forEach.call(this.children, function (b) { b.setAttribute('aria-pressed', b === e.target ? 'true' : 'false'); }); });
   $('rgo').addEventListener('click', go);
-  $('rplay').addEventListener('click', function () { if (running) { stop(false); return; } if (start()) { this.textContent = 'Stop trip'; this.setAttribute('aria-pressed', 'true'); if (matchMedia('(max-width: 560px)').matches) closeRoute(); canvas.focus(); } });
+  $('rplay').addEventListener('click', function () { if (running) { stop(false); return; } if (start()) { this.textContent = T('Stop trip', 'Avbryt resan'); this.setAttribute('aria-pressed', 'true'); if (matchMedia('(max-width: 560px)').matches) closeRoute(); canvas.focus(); } });
   function closeRoute() { $('route').hidden = true; $('rt').setAttribute('aria-expanded', 'false'); }
   $('rt').addEventListener('click', function () { var p = $('route'), open = p.hidden; closeScene(); p.hidden = !open; this.setAttribute('aria-expanded', open ? 'true' : 'false'); if (open) $('rto').focus(); });
   $('sky').addEventListener('click', closeRoute);
@@ -2109,7 +2111,8 @@ var journey = (function () {
     G.pos.forEach(function (p, k) { if (!p) return; var c = comp[G.base[k]]; km[c] += R[k].len; if (!ex[c] || R[k].len > ex[c][3]) ex[c] = [R[k].c, Math.round(R[k].p[0].x), Math.round(R[k].p[0].y), R[k].len]; });
     return km.map(function (m, i) { return [Math.round(m), ex[i].slice(0, 3)]; }).sort(function (a, b) { return b[0] - a[0]; }).slice(0, 12);
   }
-  return { open: function (from, to, by) { $('rfrom').value = from || ''; $('rto').value = to || ''; var bt = document.querySelector('#rmodes [data-v="' + by + '"]'); if (bt) bt.click(); else go(); $('route').hidden = false; $('rt').setAttribute('aria-expanded', 'true'); },
+  function relabel() { $('rplay').textContent = running ? T('Stop trip', 'Avbryt resan') : T('Start trip', 'Starta resan'); $('tpause').textContent = paused ? T('Resume', 'Fortsätt') : T('Pause', 'Pausa'); $('tview').textContent = view === 'above' ? T('Close up', 'Närbild') : T('From above', 'Ovanifrån'); if (running) bar(); }
+  return { relabel: relabel, open: function (from, to, by) { $('rfrom').value = from || ''; $('rto').value = to || ''; var bt = document.querySelector('#rmodes [data-v="' + by + '"]'); if (bt) bt.click(); else go(); $('route').hidden = false; $('rt').setAttribute('aria-expanded', 'true'); },
     where: where, far: far, toLeg: function (i, dd) { if (cur && cur.legs[i]) { li = i; d = dd || 0; head = null; waitT = dd ? 0 : null; } }, look: look, zoomBy: zoomBy, setView: setView, components: components, step: step, go: go, start: start, stop: stop, plan: plan, isRunning: function () { return running; }, mini: function () { return mini; }, setMode: function (m) { modeNow = m; }, state: function () { return { li: li, d: d, legs: cur ? cur.legs.map(function (l) { return [l.mode, Math.round(l.len), Math.round(l.time)]; }) : null }; } };
 })();
 
@@ -2233,7 +2236,7 @@ map.addEventListener('click', function (e) {
 });
 
 /* ---------- readout ---------- */
-var DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], hudT = 0, streetEl = $('street'), distEl = $('district'), readEl = $('readout'), lastStreet = '';
+var DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], DIRS_SV = ['N', 'NO', 'O', 'SO', 'S', 'SV', 'V', 'NV'], hudT = 0, streetEl = $('street'), distEl = $('district'), readEl = $('readout'), lastStreet = '';
 var lastRoad = null;
 function hud() {
   var cp = Math.cos(me.pitch), gx = me.x, gz = me.z;
@@ -2241,16 +2244,16 @@ function hud() {
   var tw = me.mode === 'route' ? journey.where() : null; if (tw) { gx = tw.x; gz = tw.z; }
   /* in a vehicle the sign is about where the vehicle is, not where the camera looks */
   if ((me.mode === 'drive' || me.mode === 'bike') && ride.on) { gx = ride.x; gz = ride.z; }
-  if (me.mode === 'train') { var ns = train.nextStop(); tw = { x: me.x, z: me.z, name: 'Roslagsbanan', next: ns ? 'next stop ' + ns.name : null, dist: ns ? ns.dist : 0 }; gx = me.x; gz = me.z; }
+  if (me.mode === 'train') { var ns = train.nextStop(); tw = { x: me.x, z: me.z, name: 'Roslagsbanan', next: ns ? T('next stop ', 'nästa hållplats ') + ns.name : null, dist: ns ? ns.dist : 0 }; gx = me.x; gz = me.z; }
   var st = tw && tw.name ? tw.name : nearestStreet(gx, gz, me.mode === 'walk' ? 28 : 60) || ((me.mode === 'drive' || me.mode === 'bike') ? lastRoad : null), pl = nearestPlace(gx, gz);
   if (st) lastRoad = st;
   var title = st || (pl.d < 260 ? pl.name : 'Lahäll');
   if (title !== lastStreet) { streetEl.textContent = title; lastStreet = title; }
-  var sub = tw && tw.next ? (me.mode === 'train' ? tw.next.charAt(0).toUpperCase() + tw.next.slice(1) : 'Then ' + tw.next) + ' · ' + journey.far(tw.dist) : 'Täby · ' + (pl.d < 160 ? pl.name : Math.round(pl.d / 10) * 10 + ' m to ' + pl.name);
+  var sub = tw && tw.next ? (me.mode === 'train' ? tw.next.charAt(0).toUpperCase() + tw.next.slice(1) : T('Then ', 'Sedan ') + tw.next) + ' · ' + journey.far(tw.dist) : 'Täby · ' + (pl.d < 160 ? pl.name : Math.round(pl.d / 10) * 10 + T(' m to ', ' m till ') + pl.name);
   if (distEl.textContent !== sub) distEl.textContent = sub;
   var lat = M.lat0 - me.z / M.mz, lon = M.lon0 + me.x / M.mx, brg = ((-me.yaw * 180 / Math.PI) % 360 + 360) % 360;
-  readEl.innerHTML = '<b>' + lat.toFixed(4) + '°N ' + lon.toFixed(4) + '°E</b> <span>·</span> ' + DIRS[Math.round(brg / 45) % 8] + ' ' + ('00' + Math.round(brg) % 360).slice(-3) + '° <span>·</span> ' +
-    ({ route: 'on a trip, ', walk: 'on foot, ', drive: 'driving, ', bike: 'cycling, ', train: 'on the train, ' }[me.mode] || 'flying, ') + Math.round(me.mode === 'walk' ? me.y - EYE : me.y) + ' m above sea' + ' <span>·</span> ' + Math.round(me.speed * 3.6) + ' km/h';
+  readEl.innerHTML = '<b>' + lat.toFixed(4) + '°N ' + lon.toFixed(4) + '°E</b> <span>·</span> ' + (LANG === 'sv' ? DIRS_SV : DIRS)[Math.round(brg / 45) % 8] + ' ' + ('00' + Math.round(brg) % 360).slice(-3) + '° <span>·</span> ' +
+    T({ route: 'on a trip, ', walk: 'on foot, ', drive: 'driving, ', bike: 'cycling, ', train: 'on the train, ' }[me.mode] || 'flying, ', { route: 'på resa, ', walk: 'till fots, ', drive: 'kör, ', bike: 'cyklar, ', train: 'på tåget, ' }[me.mode] || 'flyger, ') + Math.round(me.mode === 'walk' ? me.y - EYE : me.y) + T(' m above sea', ' m över havet') + ' <span>·</span> ' + Math.round(me.speed * 3.6) + ' km/h';
 }
 
 /* ---------- loop ---------- */
@@ -2281,6 +2284,39 @@ function frame(now) {
   renderer.render(scene, camera);
   hudT -= dt; if (hudT <= 0) { hudT = 0.2; hud(); drawMap(); }
 }
+/* ---------- language: every fixed label in both languages ---------- */
+var STATIC = [
+  ['#m-tour', 'Tour', 'Rundtur'], ['#m-walk', 'Walk', 'Gå'], ['#m-fly', 'Fly', 'Flyg'], ['#m-drive', 'Drive', 'Kör'], ['#m-bike', 'Cycle', 'Cykla'], ['#m-train', 'Train', 'Tåg'],
+  ['label[for=tod]', 'Time of day', 'Tid på dygnet'], ['#l-season', 'Season', 'Årstid'], ['#l-weather', 'Weather', 'Väder'], ['#l-detail', 'Detail', 'Detaljnivå'], ['#l-rmode', 'Travel by', 'Färdsätt'],
+  ['#seasons [data-v=summer]', 'Summer', 'Sommar'], ['#seasons [data-v=autumn]', 'Autumn', 'Höst'], ['#seasons [data-v=winter]', 'Winter', 'Vinter'],
+  ['#weathers [data-v=clear]', 'Clear', 'Klart'], ['#weathers [data-v=cloudy]', 'Cloudy', 'Mulet'], ['#weathers [data-v=rain]', 'Rain', 'Regn'], ['#weathers [data-v=fog]', 'Fog', 'Dimma'], ['#weathers [data-v=snow]', 'Snow', 'Snö'],
+  ['#details [data-v=auto]', 'Auto', 'Auto'], ['#details [data-v=high]', 'High', 'Hög'], ['#details [data-v=medium]', 'Medium', 'Medel'], ['#details [data-v=low]', 'Low', 'Låg'],
+  ['#live', 'Live: match Täby right now', 'Live: som i Täby just nu'], ['#vshare', 'Copy link to this view', 'Kopiera länk till den här vyn'], ['#sceneclose', 'Close', 'Stäng'], ['#rclose', 'Close', 'Stäng'],
+  ['#rt', 'Route', 'Rutt'], ['label[for=rfrom]', 'From', 'Från'], ['label[for=rto]', 'To', 'Till'], ['#rgo', 'Show route', 'Visa rutt'], ['#rshare', 'Copy link to this route', 'Kopiera länk till den här rutten'],
+  ['#rmodes [data-v=walk]', 'Walk', 'Gå'], ['#rmodes [data-v=drive]', 'Drive', 'Bil'], ['#rmodes [data-v=bike]', 'Cycle', 'Cykel'], ['#rmodes [data-v=train]', 'Train', 'Tåg'],
+  ['#rspeed [data-v="1"]', 'Real speed', 'Verklig fart'], ['#tstop', 'Stop', 'Avbryt'], ['#tripbar small', 'Drag to look around · scroll or pinch to zoom', 'Dra för att titta runt · scrolla eller nyp för att zooma'],
+  ['#hellotitle', 'Lahäll, Täby in 3D', 'Lahäll, Täby i 3D'], ['#hellogo', 'Start exploring', 'Börja utforska'], ['#lang', 'På svenska', 'In English']
+];
+var STATIC_HTML = [
+  ['#keys', null, '<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> flytta · dra eller klicka för att titta · <kbd>Shift</kbd> fortare · <kbd>E</kbd> <kbd>Q</kbd> upp och ner · <kbd>F</kbd> gå eller flyg · <kbd>T</kbd> rundtur · bil eller cykel: <kbd>W</kbd> <kbd>S</kbd> fart, <kbd>A</kbd> <kbd>D</kbd> styr'],
+  ['.credit', null, 'Kartdata © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-bidragsgivare, via Overture Maps. Terräng, hushöjder, takformer och träd från laserdata © <a href="https://www.lantmateriet.se/" target="_blank" rel="noopener">Lantmäteriet</a> (CC BY 4.0), skannat 2021. Fasader, trafik, människor och en del gatumöbler är simulerade.'],
+  ['#hello1', null, 'Du börjar i en flygande rundtur. Välj <b>Gå</b>, <b>Flyg</b>, <b>Kör</b>, <b>Cykla</b> eller <b>Tåg</b> högst upp för att ta dig fram själv.'],
+  ['#hello2', null, 'Dra för att titta runt. Flytta dig med W A S D på tangentbord, eller med vänstra halvan av skärmen på telefon.'],
+  ['#hello3', null, 'Sök efter en adress eller plats, eller tryck på <b>Rutt</b> för att planera en resa och följa den.'],
+  ['#hello4', null, 'Klockan öppnar tid på dygnet, årstid, väder och ljud.']
+];
+var PLACEHOLDERS = [['#q', 'Address, street or place', 'Adress, gata eller plats'], ['#rto', 'Address, street or place', 'Adress, gata eller plats'], ['#rfrom', 'Where you are now', 'Där du är nu']];
+STATIC_HTML.forEach(function (r) { var e = document.querySelector(r[0]); if (e) r[1] = e.innerHTML; });
+function applyLang() {
+  document.documentElement.setAttribute('lang', LANG);
+  STATIC.forEach(function (r) { var e = document.querySelector(r[0]); if (e) e.textContent = T(r[1], r[2]); });
+  STATIC_HTML.forEach(function (r) { var e = document.querySelector(r[0]); if (e) e.innerHTML = T(r[1], r[2]); });
+  PLACEHOLDERS.forEach(function (r) { var e = document.querySelector(r[0]); if (e) e.setAttribute('placeholder', T(r[1], r[2])); });
+  $('snd').textContent = sound.isOn() ? T('Sound on', 'Ljud på') : T('Sound off', 'Ljud av');
+  journey.relabel(); quality.set(quality.state()[0]); lastStreet = null; hud();
+}
+$('lang').addEventListener('click', function () { LANG = LANG === 'sv' ? 'en' : 'sv'; try { localStorage.setItem('lahall-lang', LANG); } catch (e) {} applyLang(); });
+applyLang();
 $('veil').hidden = true;
 var linked = false; try { linked = openLink(); } catch (e) {}
 window.addEventListener('hashchange', function () { try { openLink(); } catch (e) {} });

@@ -1,0 +1,20 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const errs = [];
+  const open = async (hash, hello) => { const c = await b.newContext({ viewport: { width: 1100, height: 700 } }); const p = await c.newPage();
+    p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); }); p.on('pageerror', e => errs.push(e.message));
+    if (!hello) await p.addInitScript(() => { try { localStorage.setItem('lahall-seen', '1'); } catch (e) {} });
+    await p.route('**/three.min.js', r => r.fulfill({ path: __dirname + '/node_modules/three/build/three.min.js', contentType: 'text/javascript' }));
+    await p.route('**/fonts.googleapis.com/**', r => r.fulfill({ body: '', contentType: 'text/css' }));
+    await p.goto('http://localhost:8765/index.html' + hash); await p.waitForTimeout(14000); return p; };
+  let p = await open('', true); console.log('hello shown', await p.evaluate(() => !document.getElementById('hello').hidden)); await p.screenshot({ path: process.argv[2] + '/hello.png' });
+  await p.evaluate(() => document.getElementById('hellogo').click()); console.log('hello closed', await p.evaluate(() => document.getElementById('hello').hidden + ' seen=' + localStorage.getItem('lahall-seen')));
+  await p.evaluate(() => document.getElementById('vshare').click()); await p.waitForTimeout(500); console.log('view link', await p.evaluate(() => document.getElementById('sharelink').value + ' | ' + document.getElementById('sharenote').textContent)); await p.close();
+  p = await open('#at=59.42400,18.07410,60,45,-20'); console.log('at', await p.evaluate(() => JSON.stringify([window.__lahall.me.mode, Math.round(window.__lahall.me.x), Math.round(window.__lahall.me.z), Math.round(window.__lahall.me.y), document.getElementById('hello').hidden]))); await p.close();
+  p = await open('#q=N%C3%A4sby%20slott'); console.log('q', await p.evaluate(() => JSON.stringify([window.__lahall.me.mode, Math.round(window.__lahall.me.x), Math.round(window.__lahall.me.z)]))); await p.close();
+  p = await open('#from=Lah%C3%A4llsv%C3%A4gen%2025&to=N%C3%A4sbypark%20station&by=train'); console.log('route', await p.evaluate(() => document.getElementById('rnote').textContent.slice(0, 110) + ' | panel open ' + !document.getElementById('route').hidden));
+  await p.evaluate(() => document.getElementById('rshare').click()); await p.waitForTimeout(500); console.log('route link', await p.evaluate(() => document.getElementById('rnote').textContent.slice(0, 160)));
+  await p.evaluate(() => document.getElementById('rplay').click()); await p.evaluate(() => window.__lahall.journey.toLeg(1, 0)); await p.waitForTimeout(5000); console.log('wait', await p.evaluate(() => document.getElementById('tripinfo').textContent)); await p.waitForTimeout(9000); console.log('then', await p.evaluate(() => document.getElementById('tripinfo').textContent)); await p.close();
+  console.log(errs.length ? errs.join('\n') : 'no errors'); await b.close();
+})();

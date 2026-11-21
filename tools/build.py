@@ -272,6 +272,8 @@ for g,p in bl:
             # (A tree over a house lifts the ridge, not the eaves, so the wall height is the safe thing to test.)
             if t==0 and a>=120 and (las[0]>9.5 or (nf and nf>=4 and las[3]>9.5)):
                 t=1; _ntower+=1; print('tower, not house:',p.get('id'),round(a),'m2, floors',nf,'laser walls',round(las[0],1),'top',round(las[4],1),file=sys.stderr)
+            # point blocks of six floors and more have flat roofs; what the scan shows on top is plant rooms and lift housings
+            if t==1 and rise and las[3]>18: rise=0.0; H=las[3]
             if t==2: H=min(H,4.2); rise=min(rise,2.2)
             elif t==0: H=min(H,8.5); rise=min(rise,6.5)
             if rect and las[2]: rect=(rect[1],rect[0],rect[3],rect[2],rect[4])
